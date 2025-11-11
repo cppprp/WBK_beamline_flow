@@ -23,6 +23,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from webknossos import RemoteFolder, Dataset, webknossos_context, Team
@@ -77,7 +78,6 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
     layer_name = kwargs.get('layer_name', 'xray')
 
     cmd = [
-        'time',
         'uvx', '--from', 'webknossos[all]', '--python', '3.12',
         'webknossos', 'convert',
         input_dir, output_path,
@@ -90,7 +90,7 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
     logger.debug(f"Input: {input_dir}")
     logger.debug(f"Output: {output_path}")
     logger.debug(f"Converter command: {' '.join(cmd)}")
-
+    start = time.time()
     try:
         process = subprocess.Popen(
             cmd,
@@ -112,8 +112,8 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         if return_code != 0:
             logger.error(f"Remote conversion failed with return code {return_code}")
             raise RuntimeError("Remote conversion failed")
-
-        logger.info("✓ Conversion completed successfully")
+        end = time.time()
+        logger.info(f"✓ Conversion completed successfully in {(end-start)/60.0}")
         return True
 
     except Exception as e:
