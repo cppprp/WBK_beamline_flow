@@ -105,7 +105,7 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         for line in process.stdout:
             line = line.rstrip()
             if line:
-                if 'FutureWarning' in line or 'site-packages' in line:
+                if 'FutureWarning' in line or 'site-packages' in line or 'return imread' in line:
                     continue
                 logger.debug(f"  {line}")
 
