@@ -56,22 +56,16 @@ key_mapping = {
 }
 
 
-def announce_dataset(logger, sample_name, token):
+def announce_dataset(logger, ds, token):
     logger.info("Announcing dataset...")
-    logger.debug(f"Sample name: {sample_name}")
-
     with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
-        dataset_id, _ = Dataset.announce_manual_upload(
-            sample_name,
-            "EMBL Hamburg",
+        ds_remote, _ =ds.upload(
             initial_team_ids=['ximg'],
             folder_id=None
         )
-
-
-        logger.debug(f"Dataset ID: {dataset_id}")
+        logger.debug(f"Dataset ID: {ds_remote.dataset_id}")
         logger.info("✓ Dataset announced")
-        return dataset_id
+        return ds_remote
 
 
 def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs):
@@ -89,11 +83,11 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         f'--voxel-size {voxel_size} --downsample'
     )
 
-    ssh_cmd = ['ssh', '-t', remote_host, 'time', remote_cmd]
+    ssh_cmd = ['time', remote_cmd]
 
     logger.debug(f"Input: {input_dir}")
     logger.debug(f"Output: {output_path}")
-    logger.debug(f"SSH command: {' '.join(ssh_cmd)}")
+    logger.debug(f"Converter command: {' '.join(ssh_cmd)}")
 
     try:
         process = subprocess.Popen(
@@ -125,8 +119,10 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         raise
 
 
-def set_permissions(logger, sample_name, input_dir, token):
-    """Set permissions and metadata."""
+def set_permissions(logger, sample_name, input_dir, ds_remote, token):
+    """Set permissions and metadata.
+    :param ds_remote: RemoteDataset()
+    """
     logger.info("-" * 60)
     logger.info("Setting permissions and metadata...")
 
@@ -152,7 +148,7 @@ def set_permissions(logger, sample_name, input_dir, token):
     try:
         with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
 
-            dataset = Dataset.open_remote(sample_name)
+            dataset = ds_remote.open()
             logger.debug(f"Opened dataset: {dataset.name}")
 
             dataset.name = readable_name
@@ -222,7 +218,7 @@ def main():
     # Optional
     parser.add_argument('--skip_conversion', action='store_true')
     parser.add_argument('--skip_permissions', action='store_true')
-    parser.add_argument('--skip_announce', action='store_true')
+    parser.add_argument('--skip_announce', action='store_false')
 
     args = parser.parse_args()
     #logging config
@@ -256,13 +252,16 @@ def main():
 
         logger.debug(f"Stack path: {stack}")
 
+        output_path = f"/morningstar/webknossos/{args.sample_name}"
+
         # Announce dataset
         if not args.skip_announce:
-            announce_dataset(logger, args.sample_name, args.token)
+            wbkDataset = Dataset(output_path, voxel_size=args.voxel_size)
+            wbkDataset = announce_dataset(logger, wbkDataset, args.token)
 
         # Conversion
         if not args.skip_conversion:
-            output_path = f"/morningstar/webknossos/{args.sample_name}"
+
             run_remote_conversion(
                 logger, stack, output_path, args.remote_host,
                 layer_name=args.layer_name,
@@ -272,7 +271,7 @@ def main():
 
         # Permissions and metadata
         if not args.skip_permissions:
-            set_permissions(logger, args.sample_name, args.input_dir, args.token)
+            set_permissions(logger, args.sample_name, args.input_dir, wbkDataset, args.token)
 
         logger.info("=" * 60)
         logger.info("✓ Pipeline completed successfully")
