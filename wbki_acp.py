@@ -91,6 +91,16 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
     logger.debug(f"Output: {output_path}")
     logger.debug(f"Converter command: {' '.join(cmd)}")
     start = time.time()
+    skip_patterns = [
+        'FutureWarning',
+        'DeprecationWarning',
+        'UserWarning'
+        'site-packages',
+        'plugin infrastructure',
+        'return imread',
+        'warnings.warn',
+        'stacklevel=',
+    ]
     try:
         process = subprocess.Popen(
             cmd,
@@ -105,7 +115,7 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         for line in process.stdout:
             line = line.rstrip()
             if line:
-                if 'FutureWarning' in line or 'site-packages' in line or 'return imread' in line:
+                if any(pattern in line for pattern in skip_patterns):
                     continue
                 logger.debug(f"  {line}")
 
