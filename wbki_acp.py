@@ -121,7 +121,7 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         raise
 
 
-def set_permissions(logger, sample_name, input_dir, ds_remote, token):
+def set_permissions(logger, sample_name, input_dir, token):
     """Set permissions and metadata.
     :param ds_remote: RemoteDataset()
     """
