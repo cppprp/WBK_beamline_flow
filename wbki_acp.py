@@ -76,22 +76,24 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
     jobs = kwargs.get('jobs', 24)
     layer_name = kwargs.get('layer_name', 'xray')
 
-    remote_cmd = (
-        f'uvx --from "webknossos[all]" --python 3.12 webknossos convert '
-        f'{input_dir} {output_path} '
-        f'--compress --layer-name {layer_name} --jobs {jobs} '
-        f'--voxel-size {voxel_size} --downsample'
-    )
-
-    ssh_cmd = [remote_cmd]
+    cmd = [
+        'time',
+        'uvx', '--from', 'webknossos[all]', '--python', '3.12',
+        'webknossos', 'convert',
+        input_dir, output_path,
+        '--compress', '--layer-name', layer_name,
+        '--jobs', str(jobs),
+        '--voxel-size', voxel_size,
+        '--downsample'
+    ]
 
     logger.debug(f"Input: {input_dir}")
     logger.debug(f"Output: {output_path}")
-    logger.debug(f"Converter command: {' '.join(ssh_cmd)}")
+    logger.debug(f"Converter command: {' '.join(cmd)}")
 
     try:
         process = subprocess.Popen(
-            ssh_cmd,
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
