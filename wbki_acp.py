@@ -106,7 +106,7 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
             universal_newlines=True
         )
 
-        # All conversion output goes to DEBUG (file only)
+
         for line in process.stdout:
             line = line.rstrip()
             if line:
@@ -227,7 +227,7 @@ def main():
     parser.add_argument('--skip_announce', action='store_true')
 
     args = parser.parse_args()
-
+    #logging config
     logger = logging.getLogger(args.sample_name)
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
@@ -236,7 +236,7 @@ def main():
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(logging.DEBUG)
     handler.setFormatter(logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
+        '%(asctime)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     ))
 
