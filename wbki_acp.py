@@ -150,7 +150,7 @@ def set_permissions(logger, sample_name, input_dir, ds_remote, token):
     try:
         with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
 
-            dataset = ds_remote.open()
+            dataset = Dataset.open_remote(sample_name)
             logger.debug(f"Opened dataset: {dataset.name}")
 
             dataset.name = readable_name
@@ -273,7 +273,7 @@ def main():
 
         # Permissions and metadata
         if not args.skip_permissions:
-            set_permissions(logger, args.sample_name, args.input_dir, wbkDataset, args.token)
+            set_permissions(logger, args.sample_name, args.input_dir, args.token)
 
         logger.info("=" * 60)
         logger.info("✓ Pipeline completed successfully")
