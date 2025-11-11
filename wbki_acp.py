@@ -83,7 +83,7 @@ def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs)
         f'--voxel-size {voxel_size} --downsample'
     )
 
-    ssh_cmd = ['time', remote_cmd]
+    ssh_cmd = [remote_cmd]
 
     logger.debug(f"Input: {input_dir}")
     logger.debug(f"Output: {output_path}")
