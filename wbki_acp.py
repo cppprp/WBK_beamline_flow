@@ -29,7 +29,7 @@ import warnings
 from webknossos import RemoteFolder, Dataset, webknossos_context, Team
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
+logging.captureWarnings(False)
 key_mapping = {
     'user': 'User',
     'operator': 'Operator',
