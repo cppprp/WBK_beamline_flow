@@ -6,7 +6,7 @@
 # ]
 # ///
 """
-Assign WebKnossos permissions and attach metadata to datasets.
+Assign WebKnossos permissions and attach metadata to datasets. Initial test
 
 Usage:
     uv run set_wk_permissions.py \
