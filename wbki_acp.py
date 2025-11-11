@@ -75,7 +75,6 @@ def announce_dataset(logger, sample_name, token):
 
 
 def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs):
-    """Run conversion on remote host via SSH."""
     logger.info("-" * 60)
     logger.info("Starting remote conversion...")
 
@@ -221,7 +220,6 @@ def main():
     parser.add_argument('--jobs', type=int, default=24, help='Number of jobs for the conversion')
 
     # Optional
-    parser.add_argument('--log_dir', default='./logs')
     parser.add_argument('--skip_conversion', action='store_true')
     parser.add_argument('--skip_permissions', action='store_true')
     parser.add_argument('--skip_announce', action='store_true')
