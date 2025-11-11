@@ -25,10 +25,10 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-
+import warnings
 from webknossos import RemoteFolder, Dataset, webknossos_context, Team
 
-
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 key_mapping = {
     'user': 'User',
