@@ -13,7 +13,6 @@ uv run wbki_acp.py \
     --sample_name 20250921_p3l-miarnone_MA040_1 \
     --token <WBK_TOKEN> \
     --voxel_size '650,650,650' \
-    --remote_host morningstar \
     --jobs 24 \
     >& /morningstar/logs/'${sample_name}'_convert.log &
 '''
@@ -224,7 +223,7 @@ def main():
     parser.add_argument('--sample_name', required=True,
                         help='Name of the sample (e.g., YYYYDDMM_p3l-user_SampleName_R)')
     parser.add_argument('--token', required=True, help='WBK access token')
-    parser.add_argument('--remote_host', help='Remote host for conversion', default='morningstar')
+    #parser.add_argument('--remote_host', help='Remote host for conversion', default='morningstar')
     parser.add_argument('--layer_name', help='Name of the image layer displayed', default='xray')
     parser.add_argument('--voxel_size', help='Voxel size in nanometers', default='650,650,650')
     parser.add_argument('--jobs', type=int, default=24, help='Number of jobs for the conversion')
