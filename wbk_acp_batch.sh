@@ -2,12 +2,12 @@
 # Process WebKnossos datasets from a list file
 
 # Usage:
-# ./process_from_file.sh datasets.txt
+# ./wbk_acp_batch.sh datasets.txt
 
 set -e
 
 # Configuration
-SCRIPT_PATH="./wbk_convert_set_permissions.py"
+SCRIPT_PATH="./wbki_acp.py"
 TOKEN="${WBK_TOKEN}"
 VOXEL_SIZE="650,650,650"
 JOBS=24

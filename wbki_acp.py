@@ -68,7 +68,7 @@ def announce_dataset(logger, ds, token):
         return ds_remote
 
 
-def run_remote_conversion(logger, input_dir, output_path, remote_host, **kwargs):
+def run_remote_conversion(logger, input_dir, output_path, **kwargs):
     logger.info("-" * 60)
     logger.info("Starting remote conversion...")
 
@@ -274,13 +274,8 @@ def main():
 
         # Conversion
         if not args.skip_conversion:
-
-            run_remote_conversion(
-                logger, stack, output_path, args.remote_host,
-                layer_name=args.layer_name,
-                voxel_size=args.voxel_size,
-                jobs=args.jobs
-            )
+            run_remote_conversion(logger, stack, output_path, layer_name=args.layer_name, voxel_size=args.voxel_size,
+                                  jobs=args.jobs)
 
         # Permissions and metadata
         if not args.skip_permissions:
