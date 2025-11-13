@@ -9,7 +9,7 @@ set -e
 # Configuration
 SCRIPT_PATH="./wbki_acp.py"
 TOKEN="${WBK_TOKEN}"
-VOXEL_SIZE="650,650,650"
+DEFAULT_VOXEL_SIZE="650,650,650"
 JOBS=24
 
 if [ -z "$TOKEN" ]; then
@@ -22,33 +22,52 @@ fi
 extract_sample_name() {
     local input_path="$1"
 
-    # Example: /mnt/ximg/2025/p3l-gabrielsalg/RECON/20251007/HD1152-1A_P1/stitching_1
-    # Will construct: 20251007_p3l-gabrielsalg_HD1152-1A_P1_stitching_1
-
     local run_dir=$(basename "$input_path")
     local sample_dir=$(basename "$(dirname "$input_path")")
     local date_dir=$(basename "$(dirname "$(dirname "$input_path")")")
     local p3l_account=$(echo "$input_path" | grep -oP 'p3l-[^/]+')
 
-    echo "${date_dir}_${p3l_account}_${sample_dir}_${run_dir}"
+    # Handle recon_* vs stitching_* differently
+    if [[ "$run_dir" =~ ^recon_.*_([0-9]+)$ ]]; then
+        local run_number="${BASH_REMATCH[1]}"
+        echo "${date_dir}_${p3l_account}_${sample_dir}_${run_number}"
+    else
+        echo "${date_dir}_${p3l_account}_${sample_dir}_${run_dir}"
+    fi
 }
 
 # Function to process a single dataset
 process_dataset() {
     local input_path="$1"
+    local voxel_size="${2:-$DEFAULT_VOXEL_SIZE}"
+    local project="${3:-}"
+
     local sample_name=$(extract_sample_name "$input_path")
 
     echo "=========================================="
     echo "Processing: $sample_name"
     echo "Input path: $input_path"
+    echo "Voxel size: $voxel_size"
+    if [ -n "$project" ]; then
+        echo "Project folder: $project"
+    fi
     echo "=========================================="
 
-    uv run "$SCRIPT_PATH" \
-        --input_dir "$input_path" \
-        --sample_name "$sample_name" \
-        --token "$TOKEN" \
-        --voxel_size "$VOXEL_SIZE" \
+    # Build command with optional project argument
+    local cmd_args=(
+        "$SCRIPT_PATH"
+        --input_dir "$input_path"
+        --sample_name "$sample_name"
+        --token "$TOKEN"
+        --voxel_size "$voxel_size"
         --jobs "$JOBS"
+    )
+
+    if [ -n "$project" ]; then
+        cmd_args+=(--project "$project")
+    fi
+
+    uv run "${cmd_args[@]}"
 
     if [ $? -eq 0 ]; then
         echo "✓ Successfully processed: $sample_name"
@@ -63,13 +82,23 @@ process_dataset() {
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <path_list_file>"
     echo ""
-    echo "Example:"
-    echo "  $0 datasets.txt"
+    echo "File format (tab or space-separated columns):"
+    echo "  Column 1: Path to dataset (required)"
+    echo "  Column 2: Voxel size (optional, default: $DEFAULT_VOXEL_SIZE)"
+    echo "  Column 3: Project subfolder (optional)"
     echo ""
-    echo "The file should contain one path per line:"
-    echo "  /mnt/ximg/2025/p3l-gabrielsalg/RECON/20251007/HD1152-1A_P1/stitching_1"
-    echo "  /mnt/ximg/2025/p3l-gabrielsalg/RECON/20251007/HD1152-1A_P1/recon_111_1"
-    echo "  /mnt/ximg/2025/p3l-eduke/RECON/20251106/E5/stitching_1"
+    echo "Example file content:"
+    echo "  # Simple path only (uses defaults)"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample1/stitching_1"
+    echo ""
+    echo "  # Path with custom voxel size"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample2/recon_111_1    500,500,500"
+    echo ""
+    echo "  # Path with voxel size and project folder"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample3/stitching_1    650,650,650    cardiac_study"
+    echo ""
+    echo "  # Path with default voxel size but project folder (use - as placeholder)"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample4/stitching_1    -    cardiac_study"
     echo ""
     echo "Lines starting with # are ignored (comments)"
     exit 1
@@ -83,10 +112,13 @@ if [ ! -f "$LIST_FILE" ]; then
 fi
 
 # Read paths from file
-echo "Reading dataset paths from: $LIST_FILE"
+echo "Reading dataset configurations from: $LIST_FILE"
 echo ""
 
-datasets=()
+declare -a datasets_path
+declare -a datasets_voxel
+declare -a datasets_project
+
 line_num=0
 while IFS= read -r line || [ -n "$line" ]; do
     line_num=$((line_num + 1))
@@ -96,27 +128,39 @@ while IFS= read -r line || [ -n "$line" ]; do
         continue
     fi
 
-    # Trim whitespace
-    line=$(echo "$line" | xargs)
+    # Parse line into columns (space or tab separated)
+    read -r path voxel_size project <<< "$line"
 
     # Check if directory exists
-    if [ ! -d "$line" ]; then
-        echo "Warning (line $line_num): Directory not found: $line"
+    if [ ! -d "$path" ]; then
+        echo "Warning (line $line_num): Directory not found: $path"
         continue
     fi
 
-    datasets+=("$line")
+    # Use default voxel size if not provided or is placeholder
+    if [ -z "$voxel_size" ] || [ "$voxel_size" = "-" ]; then
+        voxel_size="$DEFAULT_VOXEL_SIZE"
+    fi
+
+    datasets_path+=("$path")
+    datasets_voxel+=("$voxel_size")
+    datasets_project+=("$project")
 done < "$LIST_FILE"
 
-if [ ${#datasets[@]} -eq 0 ]; then
+if [ ${#datasets_path[@]} -eq 0 ]; then
     echo "No valid datasets found in $LIST_FILE"
     exit 1
 fi
 
-echo "Found ${#datasets[@]} dataset(s) to process:"
-for i in "${!datasets[@]}"; do
-    sample_name=$(extract_sample_name "${datasets[$i]}")
-    echo "  $((i+1)). $sample_name"
+echo "Found ${#datasets_path[@]} dataset(s) to process:"
+for i in "${!datasets_path[@]}"; do
+    sample_name=$(extract_sample_name "${datasets_path[$i]}")
+    echo -n "  $((i+1)). $sample_name (voxel: ${datasets_voxel[$i]}"
+    if [ -n "${datasets_project[$i]}" ]; then
+        echo ", project: ${datasets_project[$i]})"
+    else
+        echo ")"
+    fi
 done
 echo ""
 
@@ -133,12 +177,15 @@ failure_count=0
 failed_datasets=()
 start_time=$(date +%s)
 
-for i in "${!datasets[@]}"; do
-    input_path="${datasets[$i]}"
-    echo ""
-    echo "[$((i+1))/${#datasets[@]}]"
+for i in "${!datasets_path[@]}"; do
+    input_path="${datasets_path[$i]}"
+    voxel_size="${datasets_voxel[$i]}"
+    project="${datasets_project[$i]}"
 
-    if process_dataset "$input_path"; then
+    echo ""
+    echo "[$((i+1))/${#datasets_path[@]}]"
+
+    if process_dataset "$input_path" "$voxel_size" "$project"; then
         success_count=$((success_count + 1))
     else
         failure_count=$((failure_count + 1))

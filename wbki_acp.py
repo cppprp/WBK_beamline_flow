@@ -14,8 +14,14 @@ uv run wbki_acp.py \
     --token <WBK_TOKEN> \
     --voxel_size '650,650,650' \
     --jobs 24 \
+    --project \
     >& /morningstar/logs/'${sample_name}'_convert.log &
 '''
+
+'''Need to assign the ssh key to morningstar before morningstar can log
+
+ssh -t p3l-user@bcrunch rsync -e 'ssh -t' -avR .ssh/authorized_keys p3l-user@morningstar:
+Then it will ask for a password twice'''
 import argparse
 import json
 import logging
@@ -132,7 +138,7 @@ def run_remote_conversion(logger, input_dir, output_path, **kwargs):
         raise
 
 
-def set_permissions(logger, sample_name, input_dir, token):
+def set_permissions(logger, sample_name, input_dir, subproject, token):
     """Set permissions and metadata.
     :param ds_remote: RemoteDataset()
     """
@@ -168,7 +174,10 @@ def set_permissions(logger, sample_name, input_dir, token):
             logger.debug(f"Updated name to: {readable_name}")
 
             # Handle folder
-            folder_path = f"Datasets/{p3l_account}"
+            if subproject is None:
+                folder_path = f"Datasets/{p3l_account}"
+            else:
+                folder_path = f"Datasets/{p3l_account}/{subproject}"
             try:
                 folder = RemoteFolder.get_by_path(folder_path)
                 logger.debug(f"Found folder: {folder_path}")
@@ -195,11 +204,23 @@ def set_permissions(logger, sample_name, input_dir, token):
             if metadata_file.exists():
                 with open(metadata_file, 'r') as f:
                     metadata = json.loads(f.read())
-                    # Convert distance floats to strings for WebKnossos
+
+                    # convert distance floats to strings for WebKnossos
                     if 'distances_mm' in metadata and isinstance(metadata['distances_mm'], list):
                         metadata['distances_mm'] = [str(d) for d in metadata['distances_mm']]
-                    # Apply prettier key names
-                    readable_metadata = {key_mapping.get(k, k): v for k, v in metadata.items()}
+
+                    # remap the order and the naming
+                    readable_metadata = {}
+                    for k in key_mapping.keys():
+                        if k in metadata:
+                            readable_metadata[key_mapping[k]] = metadata[k]
+
+                    # Add any unexpected keys that weren't in key_mapping
+                    for k, v in metadata.items():
+                        if k not in key_mapping:
+                            readable_metadata[k] = v
+                            logger.debug(f"Found unmapped metadata key: {k}")
+
                     dataset.metadata = readable_metadata
                     logger.debug(f"Attached metadata from {metadata_file}")
             else:
@@ -227,6 +248,7 @@ def main():
     parser.add_argument('--layer_name', help='Name of the image layer displayed', default='xray')
     parser.add_argument('--voxel_size', help='Voxel size in nanometers', default='650,650,650')
     parser.add_argument('--jobs', type=int, default=24, help='Number of jobs for the conversion')
+    parser.add_argument('--project', type=str, default=None, help='Optional sub project folder for the dataset')
 
     # Optional
     parser.add_argument('--skip_conversion', action='store_true')
@@ -279,7 +301,7 @@ def main():
 
         # Permissions and metadata
         if not args.skip_permissions:
-            set_permissions(logger, args.sample_name, args.input_dir, args.token)
+            set_permissions(logger, args.sample_name, args.input_dir, args.project, args.token)
 
         logger.info("=" * 60)
         logger.info("✓ Pipeline completed successfully")
