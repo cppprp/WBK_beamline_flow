@@ -18,7 +18,6 @@ if [ -z "$TOKEN" ]; then
     exit 1
 fi
 
-# Function to extract sample_name from path
 extract_sample_name() {
     local input_path="$1"
 
