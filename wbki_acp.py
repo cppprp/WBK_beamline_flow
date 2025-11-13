@@ -175,17 +175,17 @@ def set_permissions(logger, sample_name, input_dir, subproject, token):
 
             # Handle folder
             if subproject is None:
-                folder_path = f"Datasets/{p3l_account}"
+                folder_path = f"/{p3l_account}"
             else:
-                folder_path = f"Datasets/{p3l_account}/{subproject}"
+                folder_path = f"{p3l_account}/{subproject}"
             try:
-                folder = RemoteFolder.get_by_path(folder_path)
-                logger.debug(f"Found folder: {folder_path}")
+                folder = RemoteFolder.get_by_path(f"Datasets/{folder_path}")
+                logger.debug(f"Found folder: Datasets/{folder_path}")
             except Exception:
                 logger.debug(f"Creating folder: {folder_path}")
                 folder = RemoteFolder.get_by_path("Datasets")
-                folder.add_subfolder(p3l_account)
-                folder = RemoteFolder.get_by_path(folder_path)
+                folder.add_subfolder(folder_path)
+                folder = RemoteFolder.get_by_path(f"Datasets/{folder_path}")
 
             dataset.folder = folder
 
