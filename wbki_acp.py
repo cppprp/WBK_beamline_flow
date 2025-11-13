@@ -298,7 +298,7 @@ def main():
         if not args.skip_conversion:
             run_remote_conversion(logger, stack, output_path, layer_name=args.layer_name, voxel_size=args.voxel_size,
                                   jobs=args.jobs)
-
+        time.sleep(5)
         # Permissions and metadata
         if not args.skip_permissions:
             set_permissions(logger, args.sample_name, args.input_dir, args.project, args.token)
