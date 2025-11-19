@@ -8,15 +8,15 @@ set -e
 
 # Configuration
 SCRIPT_PATH="./wbki_acp.py"
-TOKEN="${WBK_TOKEN}"
+#TOKEN="${WBK_TOKEN}"
 DEFAULT_VOXEL_SIZE="650,650,650"
 JOBS=24
 
-if [ -z "$TOKEN" ]; then
-    echo "Error: WBK_TOKEN environment variable not set"
-    echo "Usage: export WBK_TOKEN='your_token_here'"
-    exit 1
-fi
+#if [ -z "$TOKEN" ]; then
+#    echo "Error: WBK_TOKEN environment variable not set"
+#    echo "Usage: export WBK_TOKEN='your_token_here'"
+#    exit 1
+#fi
 
 extract_sample_name() {
     local input_path="$1"
@@ -57,7 +57,7 @@ process_dataset() {
         "$SCRIPT_PATH"
         --input_dir "$input_path"
         --sample_name "$sample_name"
-        --token "$TOKEN"
+        #--token "$TOKEN"
         --voxel_size "$voxel_size"
         --jobs "$JOBS"
     )

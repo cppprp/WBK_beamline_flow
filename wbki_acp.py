@@ -61,6 +61,10 @@ key_mapping = {
     'file_path': 'Path to Raw Data'
 }
 
+def get_auth_token():
+    script_dir = Path(__file__).parent
+    token_file = script_dir / '.config' / 'auth_token.txt'
+    return token_file.read_text().strip()
 
 def announce_dataset(logger, ds, token):
     logger.info("Announcing dataset...")
@@ -81,6 +85,7 @@ def run_remote_conversion(logger, input_dir, output_path, **kwargs):
     voxel_size = kwargs.get('voxel_size', '650,650,650')
     jobs = kwargs.get('jobs', 24)
     layer_name = kwargs.get('layer_name', 'xray')
+    layer_type =kwargs.get ('layer_type', 'None')
 
     cmd = [
         'uvx', '--from', 'webknossos[all]', '--python', '3.12',
@@ -89,7 +94,9 @@ def run_remote_conversion(logger, input_dir, output_path, **kwargs):
         '--compress', '--layer-name', layer_name,
         '--jobs', str(jobs),
         '--voxel-size', voxel_size,
-        '--downsample'
+        '--category', layer_type,
+        '--downsample',
+        '--overwrite-existing'
     ]
 
     logger.debug(f"Input: {input_dir}")
@@ -252,18 +259,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Converting a tiff stack to a WBK dataset and editing permissions and metadata")
 
-    # Required
     parser.add_argument('--input_dir', required=True,
                         help='Path to the sample up to either /stitching_r or /recon_xyz_r')
     parser.add_argument('--sample_name', required=True,
                         help='Name of the sample (e.g., YYYYDDMM_p3l-user_SampleName_R)')
-    parser.add_argument('--token', required=True, help='WBK access token')
+    parser.add_argument('--token', required=False, help='WBK access token', default = None)
     #parser.add_argument('--remote_host', help='Remote host for conversion', default='morningstar')
     parser.add_argument('--layer_name', help='Name of the image layer displayed', default='xray')
     parser.add_argument('--voxel_size', help='Voxel size in nanometers', default='650,650,650')
     parser.add_argument('--jobs', type=int, default=24, help='Number of jobs for the conversion')
     parser.add_argument('--project', type=str, default=None, help='Optional sub project folder for the dataset')
-
+    parser.add_argument('--layer_type', type=str, default='color', help='Specify layer type: "color" or "segmentation"')
     # Optional
     parser.add_argument('--skip_conversion', action='store_true')
     parser.add_argument('--skip_permissions', action='store_true')
@@ -284,7 +290,11 @@ def main():
     ))
 
     logger.addHandler(handler)
-
+    # grab token
+    if args.token is None:
+        token = get_auth_token()
+    else:
+        token = args.token
     try:
         logger.info(f"Processing: {args.sample_name}")
         logger.debug(f"Input directory: {args.input_dir}")
@@ -294,7 +304,7 @@ def main():
         # Check input path and see if single or stitch
         if "recon_" in args.input_dir:
             stack = args.input_dir + "/tomo/"
-        elif "stitching_" in args.input_dir:
+        elif "stitching" in args.input_dir:
             stack = args.input_dir + "/stack/"
         else:
             raise ValueError(f"Bad input path {args.input_dir} - must contain 'recon_' or 'stitching_'")
@@ -306,16 +316,16 @@ def main():
         # Announce dataset
         if not args.skip_announce:
             wbkDataset = Dataset(output_path, voxel_size=args.voxel_size)
-            wbkDataset = announce_dataset(logger, wbkDataset, args.token)
+            wbkDataset = announce_dataset(logger, wbkDataset, token)
 
         # Conversion
         if not args.skip_conversion:
             run_remote_conversion(logger, stack, output_path, layer_name=args.layer_name, voxel_size=args.voxel_size,
-                                  jobs=args.jobs)
+                                  jobs=args.jobs, layer_type=args.layer_type)
         time.sleep(5)
         # Permissions and metadata
         if not args.skip_permissions:
-            set_permissions(logger, args.sample_name, args.input_dir, args.project, args.token)
+            set_permissions(logger, args.sample_name, args.input_dir, args.project, token)
 
         logger.info("=" * 60)
         logger.info("✓ Pipeline completed successfully")
