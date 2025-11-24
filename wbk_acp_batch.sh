@@ -21,16 +21,41 @@ JOBS=24
 extract_sample_name() {
     local input_path="$1"
 
+    # Remove trailing slashes
+    input_path="${input_path%/}"
+
+    # Get the run directory (stitching, recon_111_1, etc.)
     local run_dir=$(basename "$input_path")
     local sample_dir=$(basename "$(dirname "$input_path")")
-    local date_dir=$(basename "$(dirname "$(dirname "$input_path")")")
+
+    # Extract p3l account from full path
     local p3l_account=$(echo "$input_path" | grep -oP 'p3l-[^/]+')
 
-    # Handle recon_* vs stitching_* differently
+    # Find the date directory by searching for YYYYMMDD pattern
+    # This works regardless of whether RAW_DATA is present
+    local date_dir=""
+    local temp_path="$input_path"
+    while [[ "$temp_path" != "/" && "$temp_path" != "." ]]; do
+        local dir_name=$(basename "$temp_path")
+        if [[ "$dir_name" =~ ^[0-9]{8}$ ]]; then
+            date_dir="$dir_name"
+            break
+        fi
+        temp_path="$(dirname "$temp_path")"
+    done
+
+    if [[ -z "$date_dir" ]]; then
+        echo "Error: Could not find date directory (YYYYMMDD) in path: $input_path" >&2
+        return 1
+    fi
+
+    # Handle recon_* vs stitching differently
     if [[ "$run_dir" =~ ^recon_.*_([0-9]+)$ ]]; then
+        # Extract just the run number from recon_111_1 -> 1
         local run_number="${BASH_REMATCH[1]}"
         echo "${date_dir}_${p3l_account}_${sample_dir}_${run_number}"
     else
+        # Keep stitching as is
         echo "${date_dir}_${p3l_account}_${sample_dir}_${run_dir}"
     fi
 }
