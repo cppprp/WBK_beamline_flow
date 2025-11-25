@@ -8,15 +8,8 @@ set -e
 
 # Configuration
 SCRIPT_PATH="./wbki_acp.py"
-#TOKEN="${WBK_TOKEN}"
 DEFAULT_VOXEL_SIZE="650,650,650"
 JOBS=24
-
-#if [ -z "$TOKEN" ]; then
-#    echo "Error: WBK_TOKEN environment variable not set"
-#    echo "Usage: export WBK_TOKEN='your_token_here'"
-#    exit 1
-#fi
 
 extract_sample_name() {
     local input_path="$1"
@@ -63,10 +56,9 @@ extract_sample_name() {
 # Function to process a single dataset
 process_dataset() {
     local input_path="$1"
-    local voxel_size="${2:-$DEFAULT_VOXEL_SIZE}"
-    local project="${3:-}"
-
-    local sample_name=$(extract_sample_name "$input_path")
+    local voxel_size="$2"
+    local project="$3"
+    local sample_name="$4"
 
     echo "=========================================="
     echo "Processing: $sample_name"
@@ -82,7 +74,6 @@ process_dataset() {
         "$SCRIPT_PATH"
         --input_dir "$input_path"
         --sample_name "$sample_name"
-        #--token "$TOKEN"
         --voxel_size "$voxel_size"
         --jobs "$JOBS"
     )
@@ -110,9 +101,10 @@ if [ $# -eq 0 ]; then
     echo "  Column 1: Path to dataset (required)"
     echo "  Column 2: Voxel size (optional, default: $DEFAULT_VOXEL_SIZE)"
     echo "  Column 3: Project subfolder (optional)"
+    echo "  Column 4: Sample name (optional, auto-extracted from path if omitted)"
     echo ""
     echo "Example file content:"
-    echo "  # Simple path only (uses defaults)"
+    echo "  # Simple path only (uses defaults, auto-extracts sample name)"
     echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample1/stitching_1"
     echo ""
     echo "  # Path with custom voxel size"
@@ -124,7 +116,12 @@ if [ $# -eq 0 ]; then
     echo "  # Path with default voxel size but project folder (use - as placeholder)"
     echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample4/stitching_1    -    cardiac_study"
     echo ""
+    echo "  # Non-standard path with custom sample name"
+    echo "  /weird/backup/location/data    -    -    20250901_p3l-user_custom_sample"
+    echo ""
     echo "Lines starting with # are ignored (comments)"
+    echo ""
+    echo "Note: WebKnossos token is read from ~/.webknossos/token by the Python script"
     exit 1
 fi
 
@@ -142,6 +139,7 @@ echo ""
 declare -a datasets_path
 declare -a datasets_voxel
 declare -a datasets_project
+declare -a datasets_name
 
 line_num=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -153,7 +151,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
 
     # Parse line into columns (space or tab separated)
-    read -r path voxel_size project <<< "$line"
+    read -r path voxel_size project sample_name <<< "$line"
 
     # Check if directory exists
     if [ ! -d "$path" ]; then
@@ -166,9 +164,25 @@ while IFS= read -r line || [ -n "$line" ]; do
         voxel_size="$DEFAULT_VOXEL_SIZE"
     fi
 
+    # Clear project if placeholder
+    if [ "$project" = "-" ]; then
+        project=""
+    fi
+
+    # Extract sample name if not provided or is placeholder
+    if [ -z "$sample_name" ] || [ "$sample_name" = "-" ]; then
+        sample_name=$(extract_sample_name "$path")
+        if [ $? -ne 0 ]; then
+            echo "Error (line $line_num): Failed to extract sample name from: $path"
+            echo "  Please provide sample_name explicitly as 4th column"
+            continue
+        fi
+    fi
+
     datasets_path+=("$path")
     datasets_voxel+=("$voxel_size")
     datasets_project+=("$project")
+    datasets_name+=("$sample_name")
 done < "$LIST_FILE"
 
 if [ ${#datasets_path[@]} -eq 0 ]; then
@@ -178,8 +192,7 @@ fi
 
 echo "Found ${#datasets_path[@]} dataset(s) to process:"
 for i in "${!datasets_path[@]}"; do
-    sample_name=$(extract_sample_name "${datasets_path[$i]}")
-    echo -n "  $((i+1)). $sample_name (voxel: ${datasets_voxel[$i]}"
+    echo -n "  $((i+1)). ${datasets_name[$i]} (voxel: ${datasets_voxel[$i]}"
     if [ -n "${datasets_project[$i]}" ]; then
         echo ", project: ${datasets_project[$i]})"
     else
@@ -205,11 +218,12 @@ for i in "${!datasets_path[@]}"; do
     input_path="${datasets_path[$i]}"
     voxel_size="${datasets_voxel[$i]}"
     project="${datasets_project[$i]}"
+    sample_name="${datasets_name[$i]}"
 
     echo ""
     echo "[$((i+1))/${#datasets_path[@]}]"
 
-    if process_dataset "$input_path" "$voxel_size" "$project"; then
+    if process_dataset "$input_path" "$voxel_size" "$project" "$sample_name"; then
         success_count=$((success_count + 1))
     else
         failure_count=$((failure_count + 1))
