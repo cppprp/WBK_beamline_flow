@@ -37,7 +37,7 @@ uv run wbki_manual.py \
     --sample_name 20250921_p3l-user_sample_1 \
     --voxel_size '650,650,650' \
     --jobs 24
-     >& /morningstar/logs/'${sample_name}'_convert.log &
+    | & tee /morningstar/logs/sample_name_convert.log
 
 Optional:
     --token <WBK_TOKEN> (reads from .config/auth_token.txt if not provided)
@@ -217,6 +217,10 @@ def extract_sample_name_from_path(path):
 
     return sample_name
 
+def is_zarr_directory(path: Path) -> bool:
+    """Check if path is a Zarr directory."""
+    return (path / '.zarray').exists() or (path / 'zarr.json').exists()
+
 
 def extract_run_number(sample_name):
     """
@@ -275,18 +279,32 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
     jobs = kwargs.get('jobs', 24)
     layer_name = kwargs.get('layer_name', 'xray')
     layer_type = kwargs.get('layer_type', 'color')
-
-    cmd = [
-        'uvx', '--from', 'webknossos[all]', '--python', '3.12',
-        'webknossos', 'convert',
-        stack_path, output_path,
-        '--compress', '--layer-name', layer_name,
-        '--jobs', str(jobs),
-        '--voxel-size', voxel_size,
-        '--category', layer_type,
-        '--downsample',
-        '--overwrite-existing'
-    ]
+    if is_zarr_directory(stack_path):
+        cmd = [
+            'uvx', '--from', 'webknossos[all]', '--python', '3.12',
+            'python', 'webknossos', 'convert-zarr',
+            stack_path, output_path,
+            '--voxel-size', voxel_size,
+            '--layer-name', layer_name,
+            '--jobs', str(jobs),
+            '--is-segmentation-layer' if layer_type == 'segmentation' else '',
+            '--compress',
+            '--downsample',
+            '--overwrite-existing',
+            '--sampling-mode', 'isotropic']
+    else:
+        cmd = [
+            'uvx', '--from', 'webknossos[all]', '--python', '3.12',
+            'webknossos', 'convert',
+            stack_path, output_path,
+            '--compress', '--layer-name', layer_name,
+            '--jobs', str(jobs),
+            '--voxel-size', voxel_size,
+            '--category', layer_type,
+            '--downsample',
+            '--overwrite-existing',
+            '--sampling-mode', 'isotropic'
+        ]
 
     logger.debug(f"Stack path: {stack_path}")
     logger.debug(f"Output: {output_path}")
