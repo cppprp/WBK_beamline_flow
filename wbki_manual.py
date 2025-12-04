@@ -283,7 +283,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
     if is_zarr_directory(stack_path):
         cmd = [
             'uvx', '--from', 'webknossos[all]', '--python', '3.12',
-            'python', 'webknossos', 'convert-zarr',
+            'webknossos', 'convert-zarr',
             stack_path, output_path,
             '--voxel-size', voxel_size,
             '--layer-name', layer_name,
