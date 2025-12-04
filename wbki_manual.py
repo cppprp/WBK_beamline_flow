@@ -217,8 +217,9 @@ def extract_sample_name_from_path(path):
 
     return sample_name
 
-def is_zarr_directory(path: Path) -> bool:
+def is_zarr_directory(p) -> bool:
     """Check if path is a Zarr directory."""
+    path = Path(p)
     return (path / '.zarray').exists() or (path / 'zarr.json').exists()
 
 
