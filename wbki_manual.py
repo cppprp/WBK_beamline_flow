@@ -29,8 +29,7 @@ Usage:
 # Auto-extract from path
 uv run wbki_manual.py \
     --stack_path /mnt/ximg/2025/p3l-eduke/RECON/20251130/sample/stitching_1/stack \
-    --voxel_size '650,650,650' \
-    --jobs 24
+     >& /morningstar/logs/'${sample_name}'_convert.log &
 
 # Explicit sample name (for non-standard paths)
 uv run wbki_manual.py \
@@ -38,6 +37,7 @@ uv run wbki_manual.py \
     --sample_name 20250921_p3l-user_sample_1 \
     --voxel_size '650,650,650' \
     --jobs 24
+     >& /morningstar/logs/'${sample_name}'_convert.log &
 
 Optional:
     --token <WBK_TOKEN> (reads from .config/auth_token.txt if not provided)
@@ -532,7 +532,7 @@ Sample name format: YYYYMMDD_p3l-account_SampleName_RunIdentifier
                         help='Skip the conversion step')
     parser.add_argument('--skip_permissions', action='store_true',
                         help='Skip the permissions/metadata step')
-    parser.add_argument('--skip_announce', action='store_true',
+    parser.add_argument('--skip_announce', action='store_false',
                         help='Skip the dataset announcement step')
 
     args = parser.parse_args()
@@ -577,8 +577,6 @@ Sample name format: YYYYMMDD_p3l-account_SampleName_RunIdentifier
         print("  p3l-account: P3L account identifier (no underscores)")
         print("  SampleName_RunIdentifier: Everything else (at least one more component)")
         sys.exit(1)
-
-    date, p3l_account, readable_name, run_number = sample_info
 
     date, p3l_account, readable_name, run_number = sample_info
 
