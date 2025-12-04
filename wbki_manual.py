@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "webknossos==3.0.0",
+#     "webknossos==3.0.4",
 # ]
 # ///
 '''
