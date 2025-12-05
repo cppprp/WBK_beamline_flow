@@ -2,14 +2,108 @@
 # Batch process WebKnossos datasets using manual converter (no path validation)
 # For old/archive data with non-standard directory structures
 
-# Usage:
-# ./wbk_manual_batch.sh datasets.txt
-
+export OPENBLAS_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OMP_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
 set -e
 
 # Configuration
 SCRIPT_PATH="./wbki_manual.py"
+LOG_DIR="./processing_logs"
+mkdir -p "$LOG_DIR"
 
+# Generate timestamp for this batch run
+BATCH_TIMESTAMP=$(date '+%Y%m%d_%H%M%S')
+PERF_LOG="${LOG_DIR}/perf_${BATCH_TIMESTAMP}.txt"
+TIMING_LOG="${LOG_DIR}/timing_${BATCH_TIMESTAMP}.txt"
+
+# Start performance monitor in background
+./monitor_performance.sh "$PERF_LOG" 5 &
+MONITOR_PID=$!
+
+# Cleanup function to stop monitor on exit
+cleanup() {
+    echo "Stopping performance monitor..."
+    kill $MONITOR_PID 2>/dev/null || true
+
+    # Generate summary report
+    generate_report
+}
+trap cleanup EXIT
+
+# Function to generate summary report
+generate_report() {
+    local REPORT_FILE="${LOG_DIR}/report_${BATCH_TIMESTAMP}.txt"
+
+    echo "WEBKNOSSOS CONVERSION PERFORMANCE REPORT" > "$REPORT_FILE"
+    echo "Generated: $(date)" >> "$REPORT_FILE"
+    echo "========================================" >> "$REPORT_FILE"
+    echo "" >> "$REPORT_FILE"
+
+    # Batch summary
+    echo "BATCH SUMMARY:" >> "$REPORT_FILE"
+    echo "Total datasets: $((success_count + failure_count))" >> "$REPORT_FILE"
+    echo "Successful: $success_count" >> "$REPORT_FILE"
+    echo "Failed: $failure_count" >> "$REPORT_FILE"
+    echo "Total time: $((duration / 60)) minutes $((duration % 60)) seconds" >> "$REPORT_FILE"
+    echo "" >> "$REPORT_FILE"
+
+    # Per-dataset timing
+    if [ -f "$TIMING_LOG" ]; then
+        echo "INDIVIDUAL DATASET TIMING:" >> "$REPORT_FILE"
+        cat "$TIMING_LOG" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+    fi
+
+    # Performance statistics
+    if [ -f "$PERF_LOG" ]; then
+        echo "PERFORMANCE STATISTICS:" >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+
+        # Extract CPU usage stats
+        echo "CPU Usage:" >> "$REPORT_FILE"
+        grep -oP 'CPU: \K[0-9.]+' "$PERF_LOG" | awk '
+            {sum+=$1; count++; if($1>max) max=$1; if(count==1 || $1<min) min=$1}
+            END {printf "  Average: %.1f%%\n  Min: %.1f%%\n  Max: %.1f%%\n", sum/count, min, max}
+        ' >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+
+        # Extract IO wait stats
+        echo "IO Wait:" >> "$REPORT_FILE"
+        grep -oP 'IO-wait: \K[0-9.]+' "$PERF_LOG" | awk '
+            {sum+=$1; count++; if($1>max) max=$1; if(count==1 || $1<min) min=$1}
+            END {printf "  Average: %.1f%%\n  Min: %.1f%%\n  Max: %.1f%%\n", sum/count, min, max}
+        ' >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+
+        # Extract thread count stats
+        echo "Thread Count:" >> "$REPORT_FILE"
+        grep -oP 'Threads: \K[0-9]+' "$PERF_LOG" | awk '
+            {sum+=$1; count++; if($1>max) max=$1; if(count==1 || $1<min) min=$1}
+            END {printf "  Average: %.0f\n  Min: %.0f\n  Max: %.0f\n", sum/count, min, max}
+        ' >> "$REPORT_FILE"
+        echo "" >> "$REPORT_FILE"
+
+        # Extract RAM usage
+        echo "Memory Usage:" >> "$REPORT_FILE"
+        grep -oP 'RAM: [^ ]+ \((\K[0-9.]+)' "$PERF_LOG" | awk '
+            {sum+=$1; count++; if($1>max) max=$1; if(count==1 || $1<min) min=$1}
+            END {printf "  Average: %.1f%%\n  Min: %.1f%%\n  Max: %.1f%%\n", sum/count, min, max}
+        ' >> "$REPORT_FILE"
+    fi
+
+    echo "" >> "$REPORT_FILE"
+    echo "Full logs available at:" >> "$REPORT_FILE"
+    echo "  Performance: $PERF_LOG" >> "$REPORT_FILE"
+    echo "  Timing: $TIMING_LOG" >> "$REPORT_FILE"
+
+    echo ""
+    echo "=========================================="
+    echo "Report saved to: $REPORT_FILE"
+    echo "=========================================="
+    cat "$REPORT_FILE"
+}
 # Function to process a single dataset
 process_dataset() {
     local stack_path="$1"
@@ -77,13 +171,23 @@ process_dataset() {
         cmd_args+=(--layer_name "$layer_name")
     fi
 
+    # Time the conversion
+    local dataset_start=$(date +%s)
     uv run "${cmd_args[@]}"
+    local dataset_end=$(date +%s)
+    local dataset_duration=$((dataset_end - dataset_start))
 
     if [ $? -eq 0 ]; then
         echo "✓ Successfully processed: ${sample_name:-auto-detected}"
+        echo "  Time: $((dataset_duration / 60))m $((dataset_duration % 60))s"
+
+        # Log timing
+        echo "${sample_name:-auto-detected}: $((dataset_duration / 60))m $((dataset_duration % 60))s (${dataset_duration}s)" >> "$TIMING_LOG"
+
         return 0
     else
         echo "✗ Failed to process: ${sample_name:-auto-detected}"
+        echo "${sample_name:-auto-detected}: FAILED" >> "$TIMING_LOG"
         return 1
     fi
 }
