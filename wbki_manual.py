@@ -291,6 +291,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--is-segmentation-layer' if layer_type == 'segmentation' else '',
             '--compress',
             '--downsample',
+            '--overwrite-existing',
             '--sampling-mode', 'isotropic']
     else:
         cmd = [
@@ -302,6 +303,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--voxel-size', voxel_size,
             '--category', layer_type,
             '--downsample',
+            '--overwrite-existing',
             '--sampling-mode', 'isotropic'
         ]
 
