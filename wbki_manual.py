@@ -322,7 +322,15 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
         'warnings.warn',
         'stacklevel=',
     ]
-
+    subprocess_env = os.environ.copy()
+    subprocess_env.update({
+        'OPENBLAS_NUM_THREADS': '1',
+        'MKL_NUM_THREADS': '1',
+        'OMP_NUM_THREADS': '1',
+        'NUMEXPR_NUM_THREADS': '1',
+        'VECLIB_MAXIMUM_THREADS': '1',
+        'NUMBA_NUM_THREADS': '1',
+    })
     try:
         process = subprocess.Popen(
             cmd,
@@ -330,7 +338,8 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            universal_newlines=True
+            universal_newlines=True,
+            env=subprocess_env
         )
 
         for line in process.stdout:
