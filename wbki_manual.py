@@ -49,11 +49,15 @@ Optional:
     --skip_permissions (skip permissions/metadata step)
     --skip_announce (skip dataset announcement)
 '''
+import os
+os.environ['OPENBLAS_NUM_THREADS'] = '1'
+os.environ['MKL_NUM_THREADS'] = '1'
+os.environ['OMP_NUM_THREADS'] = '1'
+os.environ['NUMEXPR_NUM_THREADS'] = '1'
 
 import argparse
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -280,9 +284,11 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
     jobs = kwargs.get('jobs', 24)
     layer_name = kwargs.get('layer_name', 'xray')
     layer_type = kwargs.get('layer_type', 'color')
+    # attempt to find the current python interpreter
+    python_exe = sys.executable
     if is_zarr_directory(stack_path):
         cmd = [
-            'uvx', '--from', 'webknossos[all]', '--python', '3.12',
+            #'uvx', '--from', 'webknossos[all]', '--python', '3.12',
             'webknossos', 'convert-zarr',
             stack_path, output_path,
             '--voxel-size', voxel_size,
@@ -295,7 +301,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--sampling-mode', 'isotropic']
     else:
         cmd = [
-            'uvx', '--from', 'webknossos[all]', '--python', '3.12',
+            #'uvx', '--from', 'webknossos[all]', '--python', '3.12',
             'webknossos', 'convert',
             stack_path, output_path,
             '--compress', '--layer-name', layer_name,
@@ -322,15 +328,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
         'warnings.warn',
         'stacklevel=',
     ]
-    subprocess_env = os.environ.copy()
-    subprocess_env.update({
-        'OPENBLAS_NUM_THREADS': '1',
-        'MKL_NUM_THREADS': '1',
-        'OMP_NUM_THREADS': '1',
-        'NUMEXPR_NUM_THREADS': '1',
-        'VECLIB_MAXIMUM_THREADS': '1',
-        'NUMBA_NUM_THREADS': '1',
-    })
+
     try:
         process = subprocess.Popen(
             cmd,
@@ -338,8 +336,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            universal_newlines=True,
-            env=subprocess_env
+            universal_newlines=True
         )
 
         for line in process.stdout:
