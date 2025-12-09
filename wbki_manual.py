@@ -284,6 +284,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
     jobs = kwargs.get('jobs', 24)
     layer_name = kwargs.get('layer_name', 'xray')
     layer_type = kwargs.get('layer_type', 'color')
+    sampling_mode = kwargs.get('sampling_mode', 'isotropic')
     # attempt to find the current python interpreter
     python_exe = sys.executable
     if is_zarr_directory(stack_path):
@@ -298,7 +299,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--compress',
             '--downsample',
             '--overwrite-existing',
-            '--sampling-mode', 'isotropic']
+            '--sampling-mode', sampling_mode]
     else:
         cmd = [
             #'uvx', '--from', 'webknossos[all]', '--python', '3.12',
@@ -310,7 +311,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--category', layer_type,
             '--downsample',
             '--overwrite-existing',
-            '--sampling-mode', 'isotropic'
+            '--sampling-mode', sampling_mode
         ]
 
     logger.debug(f"Stack path: {stack_path}")
@@ -561,6 +562,8 @@ Sample name format: YYYYMMDD_p3l-account_SampleName_RunIdentifier
                         help='Optional sub-project folder under p3l_account')
     parser.add_argument('--metadata_file', default=None,
                         help='Optional path to metadata JSON file (auto-constructed if not provided)')
+    parser.add_argument('--sampling_mode', default='isotropic',
+                        help='Options: anisotropic, isotropic, constant_z. Default: isotropic.')
 
     # Skip flags
     parser.add_argument('--skip_conversion', action='store_true',
@@ -665,7 +668,8 @@ Sample name format: YYYYMMDD_p3l-account_SampleName_RunIdentifier
                 layer_name=args.layer_name,
                 voxel_size=args.voxel_size,
                 jobs=args.jobs,
-                layer_type=args.layer_type
+                layer_type=args.layer_type,
+                sampling_mode = args.sampling_mode
             )
 
         time.sleep(5)
