@@ -312,7 +312,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--category', layer_type,
             '--downsample',
             '--overwrite-existing',
-            '--batch_size', '1024',
+            '--batch-size', '1024',
             '--sampling-mode', sampling_mode
         ]
 
