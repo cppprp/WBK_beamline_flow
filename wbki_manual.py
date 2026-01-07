@@ -121,21 +121,21 @@ def validate_sample_name(sample_name):
     if len(parts) < 3:
         return None
 
-    # First part must be 8-digit date
+    # 8-digit date
     if not re.match(r'^\d{8}$', parts[0]):
         return None
 
-    # Second part must be p3l-account
+    # p3l-account
     if not re.match(r'^p3l-[^_]+$', parts[1]):
         return None
 
     date = parts[0]
     p3l_account = parts[1]
 
-    # Readable name is everything from index 2 onwards
+    # Readable name is everything from index 2 onwards and what appears in WBK interface
     readable_name = '_'.join(parts[2:])
 
-    # Run identifier is the last component
+    # Run identifier
     run_identifier = parts[-1]
 
     return (date, p3l_account, readable_name, run_identifier)
@@ -261,7 +261,7 @@ def extract_run_number(sample_name):
 
     return None
 
-# additing random comment
+#TODO this is not complete, ask Norman about the new system
 def announce_dataset(logger, ds, token):
     """Announce dataset to WebKnossos."""
     logger.info("Announcing dataset...")
@@ -286,6 +286,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
     layer_type = kwargs.get('layer_type', 'color')
     sampling_mode = kwargs.get('sampling_mode', 'isotropic')
     # attempt to find the current python interpreter
+    # not useful
     python_exe = sys.executable
     if is_zarr_directory(stack_path):
         cmd = [
@@ -311,6 +312,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--category', layer_type,
             '--downsample',
             '--overwrite-existing',
+            '--batch_size', 1024,
             '--sampling-mode', sampling_mode
         ]
 
@@ -329,6 +331,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
         'warnings.warn',
         'stacklevel=',
     ]
+    # Attempting to strap the process
     subprocess_env = os.environ.copy()
     subprocess_env.update({
         'OPENBLAS_NUM_THREADS': '1',
@@ -347,7 +350,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             text=True,
             bufsize=1,
             universal_newlines=True,
-            env =subprocess_env
+            env =subprocess_env # this is useless
         )
 
         for line in process.stdout:
