@@ -11,7 +11,7 @@ with wk.webknossos_context(
         token="q4ZFqZNCwGtBh60gdGbpqA",
         url="https://webknossos.embl-hamburg.de"
 ):
-    new_dataset = Dataset("/Users/asvetlove/temp/ND_13_TolBlue", voxel_size= (1000,1000,1), name= "ND_13_TolBlue_w"
+    new_dataset = Dataset("/Users/asvetlove/temp/ND_13_TolBlue", voxel_size= (1000,1000,1000), name= "ND_13_TolBlue_w" # don't use voxel size of 1 in Z
     )
     image_layer = new_dataset.add_layer(
         "tol_blue", category= 'color', dtype_per_channel=image_wk.dtype, num_channels=3,
@@ -20,11 +20,11 @@ with wk.webknossos_context(
     image_layer.add_mag(
         "1",
         compress=False,
-        chunk_shape=(64, 64, 1),
+        #chunk_shape=(64, 64, 1), # leave this unchanged
         chunks_per_shard=(1,1,1)
     ).write(image_wk)
     #mag = Mag(2)
-    image_layer.downsample(coarsest_mag=mag, sampling_mode=SamplingModes.CONSTANT_Z)
+    #image_layer.downsample(coarsest_mag=mag, sampling_mode=SamplingModes.CONSTANT_Z)
     uploaded_dataset = new_dataset.upload()
 
 

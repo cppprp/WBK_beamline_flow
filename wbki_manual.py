@@ -311,8 +311,7 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--voxel-size', voxel_size,
             '--category', layer_type,
             '--downsample',
-            '--overwrite-existing',
-            '--batch-size', '1024',
+            '--overwrite-existing'
             '--sampling-mode', sampling_mode
         ]
 
