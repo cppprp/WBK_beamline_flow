@@ -57,6 +57,8 @@ def main():
         args.input_path,
         args.output_path,
         "--voxel-size", args.voxel_size,
+        "--overwrite-existing",
+        "--downsample",
         "--category", args.category,
         "--distribution-strategy", "slurm",
         "--jobs", str(args.jobs),
