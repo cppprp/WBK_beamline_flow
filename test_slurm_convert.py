@@ -52,7 +52,7 @@ def main():
     # Build command
     cmd = [
         '/mx-beta/ximg-beta/uv/uvx', '--from', 'webknossos[all]', '--python', '3.12',
-        'convert',
+        'webknossos', 'convert',
         args.input_path,
         args.output_path,
         "--voxel-size", args.voxel_size,
