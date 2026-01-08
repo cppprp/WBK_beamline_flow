@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "webknossos==3.1.0",
+#     "webknossos[all]==3.1.0",
 #      "zarr"
 # ]
 # ///
