@@ -47,6 +47,7 @@ def main():
     job_resources = {
         "mem": args.worker_mem,
         "time": args.worker_time,
+        "cpus_per_task": 32,
     }
 
     # Build command
