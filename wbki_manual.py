@@ -64,7 +64,6 @@ import sys
 import time
 from pathlib import Path
 import warnings
-import zarr
 from webknossos import RemoteFolder, Dataset, webknossos_context, Team
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
