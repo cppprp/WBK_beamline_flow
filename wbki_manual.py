@@ -2,13 +2,13 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "webknossos==3.0.4",
+#     "webknossos==3.1.0",
 # ]
 # ///
 '''
 Manual WebKnossos converter for datasets with non-standard paths.
 Allows explicit specification of all parameters without path validation.
-
+# last broken version is 3.0.4, Issue  -> ERROR:root:A future crashed with an exception: No module named 'zarr'. Future: <Future at 0x7fde28570320 state=finished raised ModuleNotFoundError>
 Sample Name Construction:
 The script can extract sample names from standard path structures OR accept them explicitly.
 
