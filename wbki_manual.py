@@ -311,10 +311,9 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             '--voxel-size', voxel_size,
             '--category', layer_type,
             '--downsample',
-            '--overwrite-existing'
+            '--overwrite-existing',
             '--sampling-mode', sampling_mode
         ]
-
     logger.debug(f"Stack path: {stack_path}")
     logger.debug(f"Output: {output_path}")
     logger.debug(f"Converter command: {' '.join(cmd)}")
