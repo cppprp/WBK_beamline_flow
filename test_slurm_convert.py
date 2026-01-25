@@ -48,6 +48,7 @@ def main():
         "mem": args.worker_mem,
         "time": args.worker_time,
         "cpus-per-task": 32,
+        "ntasks" : 2
     }
 
     # Build command
