@@ -10,7 +10,7 @@ import webknossos as wk
 import cluster_tools
 from tempfile import TemporaryDirectory
 import argparse
-from webknossos import webknossos_context
+from webknossos import webknossos_context, Team
 from pathlib import Path
 import sys
 def get_auth_token():
@@ -32,6 +32,7 @@ def main():
 
     with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
         print("entered context")
+        team = Team.get_by_name(name=p3l_account)
         with TemporaryDirectory() as tmp_dir:
             print("created temp dir")
             with cluster_tools.get_executor("multiprocessing", max_workers=6) as exec:
@@ -41,7 +42,7 @@ def main():
                 print("finished downsampling staring upload")
             remote_ds = ds.upload(
                 new_dataset_name=readable_name,
-                initial_team_ids= ["ximg", p3l_account],
+                initial_team_ids= ["691317520100003802eda8a2", team.id],
                 transfer_mode=wk.TransferMode.MOVE_AND_SYMLINK,
                 folder_id=wk.RemoteFolder.get_by_path(folder)
             )
