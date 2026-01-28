@@ -29,17 +29,23 @@ def main():
         'user': 'Angelika',
         'test': 'test'
     }
+
     with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
+        print("entered context")
         with TemporaryDirectory() as tmp_dir:
+            print("created temp dir")
             with cluster_tools.get_executor("multiprocessing", max_workers=6) as exec:
                 ds = wk.Dataset.from_images(stack_path, f"{tmp_dir}/{sample_name}", voxel_size=(650,650,650), executor=exec, layer_name="xray", layer_category="color")
+                print("created dataset")
                 ds.downsample(executor=exec)
+                print("finished downsampling staring upload")
             remote_ds = ds.upload(
                 new_dataset_name=readable_name,
                 initial_team_ids= ["ximg", p3l_account],
                 transfer_mode=wk.TransferMode.MOVE_AND_SYMLINK,
                 folder_id=wk.RemoteFolder.get_by_path(folder)
             )
+            print("upload done, adding metadata")
             remote_ds.metadata = metadata
             print(remote_ds, remote_ds.metadata)
 
