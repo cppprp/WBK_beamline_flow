@@ -24,7 +24,7 @@ def main():
     p3l_account = "p3l-eduke"
     sample_name = "20251210_p3l-eduke_pin360_1"
     readable_name = "pin360_1"
-    folder = "p3l-eduke/20251210/"
+    folder = "Datasets/p3l-eduke/20251210/"
     metadata = {
         'user': 'Angelika',
         'test': 'test'
