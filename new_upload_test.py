@@ -33,7 +33,7 @@ def main():
     with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
         print("entered context")
         team = Team.get_by_name(name=p3l_account)
-        with TemporaryDirectory() as tmp_dir:
+        with TemporaryDirectory(dir="/morningstar/tmp") as tmp_dir:
             print("created temp dir")
             with cluster_tools.get_executor("multiprocessing", max_workers=6) as exec:
                 ds = wk.Dataset.from_images(stack_path, f"{tmp_dir}/{sample_name}", voxel_size=(650,650,650), executor=exec, layer_name="xray", layer_category="color")
