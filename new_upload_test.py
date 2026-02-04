@@ -13,6 +13,7 @@ import argparse
 from webknossos import webknossos_context, Team
 from pathlib import Path
 import sys
+from glob import glob
 def get_auth_token():
     """Read authentication token from config file."""
     script_dir = Path(__file__).parent
@@ -23,13 +24,14 @@ def main():
     stack_path= "/mnt/ximg/2025/p3l-eduke/RECON/20251210/pin360/recon_111_1/tomo"
     p3l_account = "p3l-eduke"
     sample_name = "20251210_p3l-eduke_pin360_1"
-    readable_name = "pin360_1"
+    readable_name = "full_name_pin360_1"
     folder = "Datasets/p3l-eduke/20251210/"
     metadata = {
         'user': 'Angelika',
         'test': 'test'
-    }
 
+    }
+    overwrite = True
     with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
         print("entered context")
         team = Team.get_by_name(name=p3l_account)
@@ -41,15 +43,22 @@ def main():
                 ds.downsample(executor=exec)
                 print("finished downsampling staring upload")
             remote_ds = ds.upload(
-                new_dataset_name=readable_name,
+                #new_dataset_name=readable_name,
                 initial_team_ids= ["691317520100003802eda8a2", team.id],
                 transfer_mode=wk.TransferMode.MOVE_AND_SYMLINK,
                 folder_id=wk.RemoteFolder.get_by_path(folder)
             )
             print("upload done, adding metadata")
             remote_ds.metadata = metadata
+            remote_ds.display_name = readable_name
+
             print(remote_ds, remote_ds.metadata)
 
-
+    morningstar_path = list(glob(sample_name+"*"))
+    if len(morningstar_path) > 1:
+        print("More than one match found to the dataset, cleanup or be more specific")
+    print(morningstar_path[0])
+    id_str = morningstar_path[0].split('-')[-1]
+    print(id_str)
 if __name__ == "__main__":
     main()
