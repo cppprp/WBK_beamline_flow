@@ -23,6 +23,7 @@ def get_auth_token():
     return token_file.read_text().strip()
 def main():
     token = get_auth_token()
+    landing_path ="/morningstar/webknossos/.published/EMBL_Hamburg/.virtual/"
     stack_path= "/mnt/ximg/2025/p3l-eduke/RECON/20251210/pin360/recon_111_1/tomo"
     p3l_account = "p3l-eduke"
     sample_name = "20251210_p3l-eduke_pin360_1"
@@ -36,7 +37,7 @@ def main():
     overwrite = True
     with webknossos_context(token=token, url="https://webknossos.embl-hamburg.de"):
         print("entered context")
-        team = Team.get_by_name(name=p3l_account)
+        '''team = Team.get_by_name(name=p3l_account)
         with TemporaryDirectory(dir="/morningstar/tmp") as tmp_dir:
             print("created temp dir")
             with cluster_tools.get_executor("multiprocessing", max_workers=6) as exec:
@@ -54,9 +55,9 @@ def main():
             remote_ds.metadata = metadata
             remote_ds.display_name = readable_name
 
-            print(remote_ds, remote_ds.metadata)
+            print(remote_ds, remote_ds.metadata)'''
 
-    morningstar_path = list(glob(sample_name+"*"))
+    morningstar_path = list(glob(landing_path+sample_name+"*"))
     if len(morningstar_path) > 1:
         print("More than one match found to the dataset, cleanup or be more specific")
     print(morningstar_path[0])
