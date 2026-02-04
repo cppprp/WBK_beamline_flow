@@ -14,6 +14,8 @@ from webknossos import webknossos_context, Team
 from pathlib import Path
 import sys
 from glob import glob
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='pims')
 def get_auth_token():
     """Read authentication token from config file."""
     script_dir = Path(__file__).parent
