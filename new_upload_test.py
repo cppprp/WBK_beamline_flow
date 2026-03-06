@@ -15,6 +15,9 @@ from pathlib import Path
 import sys
 from glob import glob
 import warnings
+
+from wkw import Dataset
+
 warnings.filterwarnings('ignore', category=FutureWarning, module='pims')
 def get_auth_token():
     """Read authentication token from config file."""
@@ -60,8 +63,20 @@ def main():
     morningstar_path = list(glob(landing_path+sample_name+"*"))
     if len(morningstar_path) > 1:
         print("More than one match found to the dataset, cleanup or be more specific")
+    elif len(morningstar_path) == 0:
+        print("No matches found")
     print(morningstar_path[0])
     id_str = morningstar_path[0].split('-')[-1]
     print(id_str)
+    d_local = Dataset.open(morningstar_path[0])
+    for layer_name, layer in d_local.layers.items():
+        print(f'Found layer: {layer_name}')
+    if 'xray' in d_local.layers.items():
+        print('X-ray layer already present')
+        d_local.delete_layer(layer_name = 'xray')
+        for layer_name, layer in d_local.layers.items():
+            print(f'Found layer: {layer_name}')
+
+
 if __name__ == "__main__":
     main()
