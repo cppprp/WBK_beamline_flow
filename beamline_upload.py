@@ -266,7 +266,7 @@ def _build_wk_dataset(
     n_slices = len(tiff_files)
 
     # z: aim for at least num_cpus tasks, must be multiple of 32 (chunk_shape.z)
-    z_chunks = max(1, math.ceil(n_slices / num_cpus / 32))
+    #z_chunks = max(1, math.ceil(n_slices / num_cpus / 32))
     ds = Dataset(out_path, voxel_size=voxel_size_um, name=dataset_name)
 
     with cluster_tools.get_executor("multiprocessing", max_workers = num_cpus) as executor:
@@ -274,7 +274,7 @@ def _build_wk_dataset(
             images=[str(f) for f in tiff_files],
             layer_name=LAYER_NAME,
             category="color",
-            chunks_per_shard=(128, 128, z_chunks),  # XY matches CLI default, z adapts, i dont know if this works
+            chunks_per_shard=(128, 128, 1),  # XYZ matches CLI default
             compress=True, executor=executor
         )
         layer.downsample(executor=executor)
