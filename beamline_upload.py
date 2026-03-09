@@ -6,6 +6,10 @@
 #   "cluster_tools",
 # ]
 # ///
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 """
 Beamline TIFF → WEBKNOSSOS upload script.
 
@@ -37,7 +41,7 @@ Usage:
 import fcntl
 import json
 import logging
-import os
+
 import re
 import sys
 from pathlib import Path
