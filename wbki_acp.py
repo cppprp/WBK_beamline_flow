@@ -2,7 +2,7 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#     "webknossos==3.0.0",
+#     "webknossos",
 # ]
 # ///
 '''
@@ -33,8 +33,8 @@ from pathlib import Path
 import warnings
 from webknossos import RemoteFolder, Dataset, webknossos_context, Team
 
-warnings.simplefilter(action='ignore', category=FutureWarning)
-logging.captureWarnings(False)
+#warnings.simplefilter(action='ignore', category=FutureWarning)
+#logging.captureWarnings(False)
 key_mapping = {
     'user': 'User',
     'operator': 'Operator',
