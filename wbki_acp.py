@@ -124,12 +124,12 @@ def run_remote_conversion(logger, input_dir, output_path, **kwargs):
         )
 
 
-        for line in process.stdout:
+        ''' for line in process.stdout:
             line = line.rstrip()
             if line:
                 if any(pattern in line for pattern in skip_patterns):
                     continue
-                logger.debug(f"  {line}")
+                logger.debug(f"  {line}")'''
 
         return_code = process.wait()
 
