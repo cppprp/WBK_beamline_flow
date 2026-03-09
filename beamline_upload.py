@@ -13,7 +13,7 @@ V20260226
 
 Triggered automatically via SSH after reconstruction or stitching is complete.
 Always uploads as the 'xray' layer. If the dataset already exists the xray
-layer is silently replaced and the dataset ID is preserved.
+layer is replaced and the dataset ID is preserved.
 
 The dataset name is constructed automatically from the input path
 
@@ -256,14 +256,17 @@ def _build_wk_dataset(
     log: logging.Logger,
 ) -> Dataset:
     import cluster_tools
-
+    import math
     tiff_files = sorted(
         list(tiff_stack.glob("*.tif")) + list(tiff_stack.glob("*.tiff"))
     )
     if not tiff_files:
         raise FileNotFoundError(f"No TIFF files found in {tiff_stack}")
     log.info(f"Found {len(tiff_files)} TIFF slices, voxel_size={voxel_size_um} µm")
+    n_slices = len(tiff_files)
 
+    # z: aim for at least num_cpus tasks, must be multiple of 32 (chunk_shape.z)
+    z_chunks = max(1, math.ceil(n_slices / num_cpus / 32))
     ds = Dataset(out_path, voxel_size=voxel_size_um, name=dataset_name)
 
     with cluster_tools.get_executor("multiprocessing", max_workers = num_cpus) as executor:
@@ -271,6 +274,7 @@ def _build_wk_dataset(
             images=[str(f) for f in tiff_files],
             layer_name=LAYER_NAME,
             category="color",
+            chunks_per_shard=(128, 128, z_chunks),  # XY matches CLI default, z adapts, i dont know if this works
             compress=True, executor=executor
         )
         layer.downsample(executor=executor)
@@ -298,7 +302,7 @@ def _set_permissions_and_metadata(
         remote_ds.name = components["readable_name"]
         log.debug(f"Dataset renamed to: {components['readable_name']}")
 
-        # Folder: Datasets/<user>/<date>  — dataset appears as leaf inside <date>
+        # Folder: Datasets/<user>/<date>  — dataset appears as inside <date>
         folder_path = (
             f"{components['user']}/"
             f"{components['imaging_date']}/"
