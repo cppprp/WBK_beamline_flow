@@ -352,12 +352,12 @@ def run_remote_conversion(logger, stack_path, output_path, **kwargs):
             env =subprocess_env # this is useless
         )
 
-        '''for line in process.stdout:
+        for line in process.stdout:
             line = line.rstrip()
             if line:
                 if any(pattern in line for pattern in skip_patterns):
                     continue
-                logger.debug(f"  {line}")'''
+                logger.debug(f"  {line}")
 
         return_code = process.wait()
 

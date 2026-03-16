@@ -226,7 +226,8 @@ def _overwrite_xray(
 
         tmp_ds = _build_wk_dataset(tiff_stack, tmp_path, dataset_name, voxel_size_um, num_cpus, log)
 
-        storage_ds = Dataset.open(storage_path)
+        storage_ds = Dataset.open(storage_path) # call remote dataset.open
+        # RemoteDataset.delete_layer()
         if LAYER_NAME in [l.name for l in storage_ds.layers.values()]:
             log.info(f"Removing old xray layer via API (updates datasource-properties.json)")
             storage_ds.delete_layer(LAYER_NAME)
@@ -234,15 +235,15 @@ def _overwrite_xray(
             log.warning(f"No existing xray layer in dataset — adding fresh")
 
         log.info("Copying new xray layer into storage dataset …")
-        storage_ds.add_layer_as_copy(
+        storage_ds.add_layer_as_copy(  # add transfer mode for RD
             tmp_ds.get_layer(LAYER_NAME),
             new_layer_name=LAYER_NAME,
         )
-
-    log.info("Triggering datastore reload …")
-    with webknossos_context(token=token, url=WK_URL):
-        RemoteDataset.trigger_reload_in_datastore(dataset_id=dataset_id)
-        remote_ds = RemoteDataset.open(dataset_id=dataset_id)
+        # Per conversation with Norman, no need to reload in datastore if RemoteDataset was edited
+        log.info("Triggering datastore reload …")
+        with webknossos_context(token=token, url=WK_URL):
+            RemoteDataset.trigger_reload_in_datastore(dataset_id=dataset_id)
+            remote_ds = RemoteDataset.open(dataset_id=dataset_id)
 
     log.info(f"Overwrite complete — id unchanged: {dataset_id}")
     return remote_ds
