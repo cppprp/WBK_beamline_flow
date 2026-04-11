@@ -271,7 +271,7 @@ def _build_wk_dataset(
     log.info(f"Found {len(tiff_files)} TIFF slices, voxel_size={voxel_size_um} µm")
     n_slices = len(tiff_files)
 
-    # z: aim for at least num_cpus tasks, must be multiple of 32 (chunk_shape.z)
+
     #z_chunks = max(1, math.ceil(n_slices / num_cpus / 32))
     ds = Dataset(out_path, voxel_size=voxel_size_um, name=dataset_name)
 
