@@ -17,6 +17,12 @@ extract_sample_name() {
     # Remove trailing slashes
     input_path="${input_path%/}"
 
+    # Strip /stack or /tomo from the end if present
+    local basename_check=$(basename "$input_path")
+    if [[ "$basename_check" == "stack" ]] || [[ "$basename_check" == "tomo" ]]; then
+        input_path="$(dirname "$input_path")"
+    fi
+
     # Get the run directory (stitching, recon_111_1, etc.)
     local run_dir=$(basename "$input_path")
     local sample_dir=$(basename "$(dirname "$input_path")")
@@ -59,6 +65,7 @@ process_dataset() {
     local voxel_size="$2"
     local project="$3"
     local sample_name="$4"
+    local flags="$5"
 
     echo "=========================================="
     echo "Processing: $sample_name"
@@ -66,6 +73,9 @@ process_dataset() {
     echo "Voxel size: $voxel_size"
     if [ -n "$project" ]; then
         echo "Project folder: $project"
+    fi
+    if [ -n "$flags" ]; then
+        echo "Flags: $flags"
     fi
     echo "=========================================="
 
@@ -80,6 +90,13 @@ process_dataset() {
 
     if [ -n "$project" ]; then
         cmd_args+=(--project "$project")
+    fi
+
+    # Add any additional flags (like --skip_conversion)
+    if [ -n "$flags" ]; then
+        # Split flags by whitespace and add them
+        read -ra flag_array <<< "$flags"
+        cmd_args+=("${flag_array[@]}")
     fi
 
     uv run "${cmd_args[@]}"
@@ -102,26 +119,31 @@ if [ $# -eq 0 ]; then
     echo "  Column 2: Voxel size (optional, default: $DEFAULT_VOXEL_SIZE)"
     echo "  Column 3: Project subfolder (optional)"
     echo "  Column 4: Sample name (optional, auto-extracted from path if omitted)"
+    echo "  Column 5: Additional flags (optional, e.g., --skip_conversion)"
     echo ""
     echo "Example file content:"
     echo "  # Simple path only (uses defaults, auto-extracts sample name)"
-    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample1/stitching_1"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample1/stitching"
     echo ""
     echo "  # Path with custom voxel size"
     echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample2/recon_111_1    500,500,500"
     echo ""
     echo "  # Path with voxel size and project folder"
-    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample3/stitching_1    650,650,650    cardiac_study"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample3/stitching    650,650,650    cardiac_study"
     echo ""
-    echo "  # Path with default voxel size but project folder (use - as placeholder)"
-    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample4/stitching_1    -    cardiac_study"
+    echo "  # Skip conversion, only update permissions/metadata"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample4/stitching    -    -    -    --skip_conversion"
     echo ""
     echo "  # Non-standard path with custom sample name"
     echo "  /weird/backup/location/data    -    -    20250901_p3l-user_custom_sample"
     echo ""
+    echo "  # Multiple flags"
+    echo "  /mnt/ximg/2025/p3l-user/RECON/20251007/Sample5/stitching    -    -    -    --skip_conversion --skip_permissions"
+    echo ""
     echo "Lines starting with # are ignored (comments)"
     echo ""
     echo "Note: WebKnossos token is read from ~/.webknossos/token by the Python script"
+    echo "      Paths ending in /stack or /tomo will be automatically trimmed"
     exit 1
 fi
 
@@ -140,6 +162,7 @@ declare -a datasets_path
 declare -a datasets_voxel
 declare -a datasets_project
 declare -a datasets_name
+declare -a datasets_flags
 
 line_num=0
 while IFS= read -r line || [ -n "$line" ]; do
@@ -151,7 +174,8 @@ while IFS= read -r line || [ -n "$line" ]; do
     fi
 
     # Parse line into columns (space or tab separated)
-    read -r path voxel_size project sample_name <<< "$line"
+    # Read first 4 columns explicitly, rest goes into flags
+    read -r path voxel_size project sample_name flags <<< "$line"
 
     # Check if directory exists
     if [ ! -d "$path" ]; then
@@ -179,10 +203,16 @@ while IFS= read -r line || [ -n "$line" ]; do
         fi
     fi
 
+    # Clear flags if placeholder
+    if [ "$flags" = "-" ]; then
+        flags=""
+    fi
+
     datasets_path+=("$path")
     datasets_voxel+=("$voxel_size")
     datasets_project+=("$project")
     datasets_name+=("$sample_name")
+    datasets_flags+=("$flags")
 done < "$LIST_FILE"
 
 if [ ${#datasets_path[@]} -eq 0 ]; then
@@ -194,10 +224,12 @@ echo "Found ${#datasets_path[@]} dataset(s) to process:"
 for i in "${!datasets_path[@]}"; do
     echo -n "  $((i+1)). ${datasets_name[$i]} (voxel: ${datasets_voxel[$i]}"
     if [ -n "${datasets_project[$i]}" ]; then
-        echo ", project: ${datasets_project[$i]})"
-    else
-        echo ")"
+        echo -n ", project: ${datasets_project[$i]}"
     fi
+    if [ -n "${datasets_flags[$i]}" ]; then
+        echo -n ", flags: ${datasets_flags[$i]}"
+    fi
+    echo ")"
 done
 echo ""
 
@@ -219,11 +251,12 @@ for i in "${!datasets_path[@]}"; do
     voxel_size="${datasets_voxel[$i]}"
     project="${datasets_project[$i]}"
     sample_name="${datasets_name[$i]}"
+    flags="${datasets_flags[$i]}"
 
     echo ""
     echo "[$((i+1))/${#datasets_path[@]}]"
 
-    if process_dataset "$input_path" "$voxel_size" "$project" "$sample_name"; then
+    if process_dataset "$input_path" "$voxel_size" "$project" "$sample_name" "$flags"; then
         success_count=$((success_count + 1))
     else
         failure_count=$((failure_count + 1))
