@@ -28,7 +28,7 @@ RAM_THRESHOLD  = 80
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def get_auth_token():
-    script_dir = Path(__file__).parent
+    script_dir = "/home/asvetlove/wbk_control"
     token_file = script_dir / '.config' / 'auth_token.txt'
     return token_file.read_text().strip()
 def get_converting_datasets() -> dict[str, str]:
