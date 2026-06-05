@@ -29,10 +29,10 @@ from pathlib import Path
 
 WK_URL          = "https://webknossos.embl-hamburg.de"
 STATE_FILE      = Path("/home/asvetlove/wbk_control/.monitor_state.json")
-NTFY_TOPIC      = "embl-p14-xk7q2m"   # change to your topic
+NTFY_TOPIC      = "morningstar-p143mb1"   # change to your topic
 RAM_THRESHOLD   = 80                   # percent — alert above this
 DISK_PATH       = Path("/morningstar/webknossos/")
-DISK_THRESHOLD  = 10                   # TB free — alert below this
+DISK_THRESHOLD  = 50                   # TB free — alert below this
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 def get_auth_token():
@@ -69,23 +69,20 @@ def get_converting_datasets() -> dict[str, str]:
 
 
 def get_ram_percent() -> tuple[float, str]:
-    """Return (percent_used, human_readable_string) e.g. (37.2, '187GB / 503GB')."""
     meminfo = Path("/proc/meminfo").read_text()
     values = {}
     for line in meminfo.splitlines():
         key, val = line.split(":")[0], line.split(":")[1].strip()
-        values[key] = int(val.split()[0])  # all values in kB
+        values[key] = int(val.split()[0])
 
-    total     = values["MemTotal"]
-    available = values["MemAvailable"]
-    used      = total - available
-    percent   = used / total * 100
+    total = values["MemTotal"]
+    used  = values["AnonPages"] + values["Shmem"]
+    percent = used / total * 100
 
     def to_gb(kb: int) -> str:
         return f"{kb / 1_048_576:.0f}GB"
 
     return percent, f"{to_gb(used)} / {to_gb(total)}"
-
 
 def get_disk_free() -> tuple[float, str]:
     """Return (free_tb, human_readable_string) for the published data path."""
