@@ -12,7 +12,7 @@ Posts to ntfy when datasets start/finish converting, and when
 RAM crosses a threshold.
 
 Cron usage (every minute):
-  * * * * * /usr/bin/uv run /home/asvetlove/wbk_control/wbk_monitor.py >> /home/asvetlove/wbk_control/logs/monitor.log 2>&1
+  * * * * * /usr/bin/uv run /home/asvetlove/wbk_control/wbk_notify.py >> /home/asvetlove/wbk_control/logs/monitor.log 2>&1
 
 .gitignore should include:
   .monitor_state.json
