@@ -1,0 +1,11 @@
+[project]
+name = "wbk-convert"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.10"
+dependencies = [
+    "openpyxl>=3.1.5",
+    # [all] pulls in tifffile and imagecodecs, which add_layer_from_images needs
+    # to read the beamline TIFF stacks. Plain `webknossos` does not include them.
+    "webknossos[all]>=4.0.0",
+]

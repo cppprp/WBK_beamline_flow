@@ -1,0 +1,128 @@
+"""WEBKNOSSOS server-side operations: folders, teams, metadata, dataset lookup.
+
+Every function here expects to be called inside an active `webknossos_context`.
+"""
+
+import logging
+
+from webknossos import RemoteDataset, RemoteFolder, Team
+
+from .config import XIMG_TEAM
+from .sidecar import to_display_metadata
+
+ROOT_FOLDER = "Datasets"
+
+
+def get_or_create_folder(folder_path: str, log: logging.Logger) -> RemoteFolder:
+    """Resolve `Datasets/<folder_path>`, creating any missing levels.
+
+    `folder_path` is relative to the Datasets root, e.g. "p3l-eduke/20250921".
+    """
+    current_full = ROOT_FOLDER
+    folder = RemoteFolder.get_by_path(current_full)
+
+    for part in folder_path.strip("/").split("/"):
+        if not part:
+            continue
+        current_full = f"{current_full}/{part}"
+        try:
+            folder = RemoteFolder.get_by_path(current_full)
+            log.debug(f"Folder exists: {current_full}")
+        except Exception:
+            log.debug(f"Creating folder: {current_full}")
+            folder = folder.add_subfolder(part)
+
+    return folder
+
+
+def get_or_create_team(team_name: str, log: logging.Logger) -> Team:
+    try:
+        team = Team.get_by_name(team_name)
+        log.debug(f"Found team: {team_name}")
+    except Exception:
+        log.info(f"Creating team: {team_name}")
+        team = Team.add(team_name)
+    return team
+
+
+def resolve_teams(user_team_name: str, log: logging.Logger) -> list[Team]:
+    """The p3l account team, plus ximg for facility-wide access.
+
+    The user team is created on demand; ximg is expected to exist already and a
+    missing one is a warning rather than a failure, so a first upload for a new
+    account is never blocked by facility configuration.
+    """
+    teams = [get_or_create_team(user_team_name, log)]
+
+    try:
+        teams.append(Team.get_by_name(XIMG_TEAM))
+    except Exception:
+        log.warning(f"Team '{XIMG_TEAM}' not found — assigning the user team only")
+
+    log.debug(f"Teams: {[t.name for t in teams]}")
+    return teams
+
+
+def find_dataset_id_by_name(names: list[str], log: logging.Logger) -> str | None:
+    """Look up a dataset id by name — the fallback for datasets with no sidecar id.
+
+    Several names are tried because a dataset is uploaded under its full
+    `20250921_p3l-eduke_MA040_1` name and then renamed to the readable
+    `MA040_1`, so which one is live depends on how far a previous run got.
+
+    Returns None when nothing matches (the caller then publishes fresh) and
+    also when the match is ambiguous — guessing would either duplicate a
+    dataset or overwrite the wrong one, so the operator is asked to pass
+    --dataset-id instead.
+    """
+    found: dict[str, str] = {}  # dataset_id → the name it matched
+    errors: list[str] = []
+
+    for name in names:
+        try:
+            matches = RemoteDataset.list(name=name)
+        except Exception as exc:
+            log.warning(f"Dataset lookup for '{name}' failed: {exc}")
+            errors.append(f"{name}: {exc}")
+            continue
+        for dataset in matches.values():
+            found[dataset.dataset_id] = name
+
+    # A lookup that could not reach the server is not evidence that the dataset
+    # is new. Treating it as new would publish a duplicate alongside the real
+    # one, so an unreachable server has to stop the run instead.
+    if errors and not found:
+        raise RuntimeError(
+            "Could not determine whether this dataset already exists — every "
+            "lookup failed:\n  " + "\n  ".join(errors) + "\n"
+            "Refusing to publish, as a fresh upload would duplicate an existing "
+            "dataset. Fix connectivity, or pass --dataset-id to overwrite a known one."
+        )
+
+    if not found:
+        return None
+
+    if len(found) > 1:
+        listed = ", ".join(f"{i} ('{n}')" for i, n in found.items())
+        raise RuntimeError(
+            f"Found {len(found)} candidate datasets for {names}: {listed}\n"
+            "Refusing to guess which one to overwrite. Re-run with --dataset-id <id>."
+        )
+
+    dataset_id, matched_name = next(iter(found.items()))
+    log.info(f"Matched existing dataset '{matched_name}' by name: {dataset_id}")
+    return dataset_id
+
+
+def attach_metadata(
+    remote_ds: RemoteDataset, raw_metadata: dict, log: logging.Logger
+) -> dict:
+    """Publish the remapped MX-Cube metadata to the dataset. Returns what was set."""
+    display = to_display_metadata(raw_metadata, log)
+    if not display:
+        log.info("No metadata to attach")
+        return {}
+
+    remote_ds.metadata = display
+    log.info(f"Attached {len(display)} metadata fields")
+    return display

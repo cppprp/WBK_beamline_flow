@@ -1,0 +1,10 @@
+config.sh
+
+__pycache__/
+*.pyc
+
+tests/.work/
+logs/
+
+# API token lives here; never commit it
+.config/
