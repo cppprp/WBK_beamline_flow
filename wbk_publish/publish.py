@@ -72,6 +72,9 @@ class PublishRequest:
     max_memory: int | None = None
     sampling_mode: str = "anisotropic"
     dataset_id: str | None = None  # operator override, skips lookup
+    # A dataset from the old system cannot be updated in place. With this set,
+    # publish a new one alongside it instead of refusing.
+    replace_legacy: bool = False
     dry_run: bool = False
 
 
@@ -92,6 +95,20 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
 
     with _dataset_lock(request.dataset_name, log):
         dataset_id = _resolve_dataset_id(request, log)
+
+        # A dataset published by the old convert-in-place system cannot be
+        # updated through this API: the mag hand-over is virtual-only, and
+        # removing its single layer leaves a datasource the datastore rejects.
+        # Decide that now, not after the conversion.
+        if dataset_id is not None and _is_legacy(dataset_id, request.token, log):
+            if not request.replace_legacy:
+                raise LegacyDatasetError(_legacy_message(dataset_id, request))
+            log.warning(
+                f"Dataset {dataset_id} was published by the old system and cannot be "
+                "updated in place. Publishing a NEW dataset instead (--replace-legacy). "
+                "The old one stays until you delete it in WEBKNOSSOS."
+            )
+            dataset_id = None
 
         if request.dry_run:
             _report_dry_run(request, dataset_id, plan, log)
@@ -141,6 +158,45 @@ def check_staging_available(log: logging.Logger) -> None:
             "WEBKNOSSOS storage."
         )
     log.debug(f"Staging directory available: {TEMP_BASE}")
+
+
+# ── Legacy datasets ───────────────────────────────────────────────────────────
+
+
+class LegacyDatasetError(RuntimeError):
+    """The matched dataset predates this pipeline and cannot be updated in place."""
+
+
+def _is_legacy(dataset_id: str, token: str, log: logging.Logger) -> bool:
+    """True when the dataset is not virtual, i.e. was converted in place.
+
+    Virtual datasets keep their datasource in the WEBKNOSSOS database and
+    support the mag hand-over this pipeline relies on. Non-virtual ones have a
+    datasource-properties.json on disk that the server rewrites on every change
+    — and the datastore refuses to write one with no layers, which is exactly
+    what removing the only layer produces.
+    """
+    virtual = is_virtual(dataset_id, token, log)
+    if virtual is None:
+        # Cannot tell; let the operation proceed and the error translation in
+        # _delete_layer explain it if it turns out to be legacy after all.
+        return False
+    return not virtual
+
+
+def _legacy_message(dataset_id: str, request: PublishRequest) -> str:
+    return (
+        f"Dataset {dataset_id} ('{request.dataset_name}') was published by the old\n"
+        "convert-in-place system and cannot be updated in place: WEBKNOSSOS only\n"
+        "supports adding mags to virtual datasets, and this one is not.\n"
+        "\n"
+        "Nothing has been changed.\n"
+        "\n"
+        "To publish this reconstruction, re-run with --replace-legacy. That creates a\n"
+        "NEW dataset (new id) alongside the old one and records the new id in the\n"
+        "sidecar, so every later re-run updates it in place. Delete the old dataset\n"
+        f"in WEBKNOSSOS afterwards: {WK_URL}/datasets/{dataset_id}"
+    )
 
 
 # ── Flow selection ────────────────────────────────────────────────────────────

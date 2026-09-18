@@ -21,6 +21,7 @@ from webknossos import (
 )
 
 from .config import BEEGFS_MOUNT
+from .memwatch import MemoryWatch
 from .resources import WorkerPlan
 from .threads import apply_thread_limit
 
@@ -80,7 +81,9 @@ def build_layer(
 
     dataset = Dataset(out_path, voxel_size=voxel_size_nm, name=dataset_name)
 
-    with cluster_tools.get_executor(
+    # Watch the workers' memory: the plan's per-worker figure is an estimate,
+    # and this is the only place it ever gets measured.
+    with MemoryWatch(log, plan), cluster_tools.get_executor(
         "multiprocessing", max_workers=plan.workers
     ) as executor:
         try:

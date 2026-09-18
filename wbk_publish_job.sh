@@ -138,6 +138,9 @@ echo "module:     $WBK_MODULE"
 echo "checkout:   $WBK_HOME"
 echo "python:     $("$PYTHON" -c 'import sys; print(sys.version.split()[0])') ($PYTHON)"
 echo "webknossos: $("$PYTHON" -c 'import webknossos; print(webknossos.current_version)')"
+# Limits that turn a healthy allocation into std::bad_alloc: an address-space
+# ulimit, or strict overcommit. Printed so a memory failure can be read off the log.
+echo "ulimit -v:  $(ulimit -v)   overcommit: $(cat /proc/sys/vm/overcommit_memory 2>/dev/null || echo '?')"
 echo
 
 cd "$WBK_HOME"
