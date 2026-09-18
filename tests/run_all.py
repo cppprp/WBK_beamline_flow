@@ -33,6 +33,7 @@ CHECKS = [
     ("check_ngff", "zarr group metadata rebuilt over suffixed mag paths"),
     ("check_conversion_errors", "a bad slice is located and explained"),
     ("check_delete_errors", "delete_layer timeout diagnostics"),
+    ("check_legacy", "legacy datasets refused before conversion; --replace-legacy"),
     ("check_api", "webknossos API surface the pipeline depends on"),
 ]
 

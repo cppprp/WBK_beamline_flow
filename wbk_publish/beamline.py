@@ -55,6 +55,7 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
         max_workers=args.cpus,
         max_memory=args.max_memory,
         dataset_id=args.dataset_id,
+        replace_legacy=args.replace_legacy,
         dry_run=args.dry_run,
     )
 
@@ -100,6 +101,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--dataset-id",
         help="Overwrite this specific dataset, skipping sidecar and name lookup",
+    )
+    parser.add_argument(
+        "--replace-legacy",
+        action="store_true",
+        help="If the matched dataset was published by the old system and cannot be "
+        "updated in place, publish a new dataset alongside it instead of refusing",
     )
     parser.add_argument(
         "--dry-run",

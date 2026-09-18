@@ -7,7 +7,7 @@ import logging
 
 from webknossos import RemoteDataset, RemoteFolder, Team
 
-from .config import XIMG_TEAM
+from .config import WK_URL, XIMG_TEAM
 from .sidecar import to_display_metadata
 
 ROOT_FOLDER = "Datasets"
@@ -112,6 +112,35 @@ def find_dataset_id_by_name(names: list[str], log: logging.Logger) -> str | None
     dataset_id, matched_name = next(iter(found.items()))
     log.info(f"Matched existing dataset '{matched_name}' by name: {dataset_id}")
     return dataset_id
+
+
+def is_virtual(dataset_id: str, token: str, log: logging.Logger) -> bool | None:
+    """Whether the dataset is virtual. None if the API does not say.
+
+    The Python client's dataset model does not carry this flag, so it is read
+    from the raw JSON. Only virtual datasets can have layers replaced through
+    the upload-to-paths API; anything the old convert-in-place system published
+    is not virtual.
+    """
+    import httpx
+
+    try:
+        response = httpx.get(
+            f"{WK_URL}/api/datasets/{dataset_id}",
+            headers={"X-Auth-Token": token},
+            timeout=30,
+        )
+        response.raise_for_status()
+        flag = response.json().get("isVirtual")
+    except Exception as exc:  # noqa: BLE001 - advisory; the caller has a backstop
+        log.warning(f"Could not determine whether {dataset_id} is virtual: {exc}")
+        return None
+
+    if flag is None:
+        log.debug("Dataset info carries no isVirtual flag")
+        return None
+    log.debug(f"Dataset {dataset_id} isVirtual={flag}")
+    return bool(flag)
 
 
 def attach_metadata(

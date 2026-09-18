@@ -42,6 +42,7 @@ from .remote import (
     attach_metadata,
     find_dataset_id_by_name,
     get_or_create_folder,
+    is_virtual,
     resolve_teams,
 )
 from .sidecar import (
@@ -414,6 +415,17 @@ def _delete_layer(
         ) from exc
     except Exception as exc:
         text = str(exc)
+        # Backstop for a legacy dataset that slipped past the up-front check —
+        # the datastore refuses to write an on-disk datasource with no layers.
+        if "No layers" in text or "notVirtual" in text:
+            raise LegacyDatasetError(
+                f"Removing layer '{layer_name}' was rejected by the server, which "
+                "means this dataset is not virtual: it was published by the old "
+                "convert-in-place system.\n"
+                f"  {text.splitlines()[0]}\n\n"
+                "Nothing has been changed. Re-run with --replace-legacy to publish a "
+                "new dataset alongside it."
+            ) from exc
         if any(f"status {status}" in text for status in _GATEWAY_STATUSES):
             raise LayerDeletionTimeout(
                 _timeout_message(
