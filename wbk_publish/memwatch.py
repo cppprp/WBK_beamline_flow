@@ -35,11 +35,17 @@ class MemoryWatch:
         log: logging.Logger,
         plan: WorkerPlan,
         *,
+        phase: str = "conversion",
+        assumed_per_worker: int | None = None,
         sample_every: float = 5.0,
         report_every: float = 60.0,
     ) -> None:
         self.log = log
         self.plan = plan
+        self.phase = phase
+        # What this phase was sized on. Conversion is sized on the plan's
+        # estimate; downsampling on a figure derived from the measured peak.
+        self.assumed = assumed_per_worker or plan.mem_per_worker
         self.sample_every = sample_every
         self.report_every = report_every
         self.peak_total = 0
@@ -97,8 +103,8 @@ class MemoryWatch:
                 self.log.info("Memory: no worker processes were observed")
             return
 
-        assumed = self.plan.mem_per_worker
-        label = "Peak memory" if final else "Memory so far"
+        assumed = self.assumed
+        label = f"Peak memory ({self.phase})" if final else f"Memory so far ({self.phase})"
         line = (
             f"{label}: largest worker {_fmt_bytes(self.peak_worker)}, "
             f"total {_fmt_bytes(self.peak_total)} across up to {self.workers_seen} workers"
@@ -114,9 +120,13 @@ class MemoryWatch:
         if final and ratio > 1.15:
             # The safety margin in resources.ESTIMATE_MARGIN is 25%. Past that,
             # the sizing would have overcommitted the node on a bigger stack.
+            knob = (
+                "DOWNSAMPLE_PEAK_RATIO" if self.phase == "downsampling"
+                else "MEMORY_OVERHEAD_FACTOR"
+            )
             self.log.warning(
-                f"Workers used {ratio:.2f}x the memory the plan assumed. On a larger "
-                "stack this would exceed the node. Raise MEMORY_OVERHEAD_FACTOR in "
-                f"resources.py from its current value by about this ratio, or pass "
-                "--max-memory to leave headroom until it is corrected."
+                f"Workers used {ratio:.2f}x the memory the {self.phase} phase was "
+                f"sized on. On a larger stack this would exceed the node. Raise "
+                f"{knob} in resources.py by about this ratio, or pass --max-memory "
+                "to leave headroom until it is corrected."
             )

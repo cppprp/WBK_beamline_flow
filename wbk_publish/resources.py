@@ -30,9 +30,21 @@ from webknossos.dataset.defaults import DEFAULT_SHARD_SHAPE_FROM_IMAGES
 
 BATCH_Z = DEFAULT_SHARD_SHAPE_FROM_IMAGES.z
 
-# Measured headroom over the raw slab: the read buffer, the BufferedSliceWriter's
-# own copy, and zstd's working memory during shard compression.
-MEMORY_OVERHEAD_FACTOR = 2.5
+# Peak worker memory during conversion, as a multiple of the raw slab (full xy
+# extent x 32 slices x bytes per pixel). Measured, not reasoned: a 3584^2 float32
+# stack (1.53 GiB slab) peaked at 9.4 GiB per worker on webknossos 4.0 — the
+# decoded slices, the assembled array, a transposed copy for the zarr axis order,
+# and the 4096^2 shard the slab is padded into. 6.0 puts that case at 9.2 GiB
+# planned with the ESTIMATE_MARGIN on top. Re-check against the "Peak memory"
+# log line whenever a new data shape or dtype goes through.
+MEMORY_OVERHEAD_FACTOR = 6.0
+
+# Downsampling has a different profile: a worker was observed at 2.2x the
+# conversion-phase peak (21 GiB against 9.4) while the concurrent total stayed
+# flat. The mechanism is not pinned down, so the downsample phase is sized from
+# the conversion peak *measured in the same run*, times this. Fewer workers
+# there costs little — the pyramid is an eighth of the data.
+DOWNSAMPLE_PEAK_RATIO = 2.5
 
 # Leave the OS, page cache and the controller process room to breathe.
 RAM_SAFETY_FRACTION = 0.9
@@ -279,6 +291,32 @@ def plan_workers(
         limited_by=limited_by,
         warning=warning,
     )
+
+
+def downsample_workers(
+    plan: WorkerPlan, measured_peak: int, log: logging.Logger
+) -> tuple[int, int]:
+    """Size the downsample pool from what conversion actually used.
+
+    `measured_peak` is the largest worker seen during conversion. The larger
+    of that and the plan's estimate is the baseline — a measurement below the
+    estimate is not a reason to be less careful — and the downsample figure is
+    that times DOWNSAMPLE_PEAK_RATIO. Never more workers than conversion had:
+    the thread limit was set for that count.
+
+    Returns (workers, assumed bytes per worker).
+    """
+    baseline = max(measured_peak, plan.mem_per_worker)
+    per_worker = int(baseline * DOWNSAMPLE_PEAK_RATIO)
+    workers = max(1, min(plan.workers, plan.usable_ram // per_worker))
+
+    log.info(
+        f"Downsampling with {workers} workers "
+        f"({_fmt_bytes(per_worker)}/worker assumed: conversion peaked at "
+        f"{_fmt_bytes(baseline)}, and downsampling has been seen at "
+        f"{DOWNSAMPLE_PEAK_RATIO}x that)"
+    )
+    return workers, per_worker
 
 
 def plan_for_stack(

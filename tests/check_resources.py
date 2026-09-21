@@ -47,7 +47,10 @@ for side in (2048, 4096, 8192):
 
 eq("2048^2 is core-limited", rows[0][1].limited_by, "cores")
 eq("2048^2 uses every core", rows[0][1].workers, NODE_CORES)
-eq("4096^2 is core-limited", rows[1][1].limited_by, "cores")
+# With the measured 6x factor a 4096^2 uint16 slab is 6 GiB per worker, so a
+# 512 GiB node fits ~76 of them — memory binds before the 176 cores do.
+eq("4096^2 is memory-limited", rows[1][1].limited_by, "memory")
+eq("4096^2 still uses most of the node", rows[1][1].workers >= 64, True)
 eq("8192^2 is memory-limited", rows[2][1].limited_by, "memory")
 
 big = rows[2][1]

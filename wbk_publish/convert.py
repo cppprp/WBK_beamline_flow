@@ -22,7 +22,7 @@ from webknossos import (
 
 from .config import BEEGFS_MOUNT
 from .memwatch import MemoryWatch
-from .resources import WorkerPlan
+from .resources import WorkerPlan, downsample_workers
 from .threads import apply_thread_limit
 
 # webknossos 3.x defaults to Zarr3 already; naming it here keeps the intent
@@ -83,7 +83,7 @@ def build_layer(
 
     # Watch the workers' memory: the plan's per-worker figure is an estimate,
     # and this is the only place it ever gets measured.
-    with MemoryWatch(log, plan), cluster_tools.get_executor(
+    with MemoryWatch(log, plan, phase="conversion") as watch, cluster_tools.get_executor(
         "multiprocessing", max_workers=plan.workers
     ) as executor:
         try:
@@ -109,6 +109,14 @@ def build_layer(
                 raise
             raise ConversionFailed(_conversion_message(exc, tiff_files)) from exc
 
+    # Downsampling runs in its own, usually smaller, pool. A downsample worker
+    # has been seen at more than twice the conversion peak, and the conversion
+    # peak was just measured — so size this phase from the measurement rather
+    # than from the estimate the first pool was built on.
+    workers, assumed = downsample_workers(plan, watch.peak_worker, log)
+    with MemoryWatch(
+        log, plan, phase="downsampling", assumed_per_worker=assumed
+    ), cluster_tools.get_executor("multiprocessing", max_workers=workers) as executor:
         layer.downsample(
             sampling_mode=SamplingModes.parse(sampling_mode),
             executor=executor,

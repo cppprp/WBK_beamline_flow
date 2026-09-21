@@ -86,7 +86,7 @@ machine's allocation:
 
 ```
 tasks        = ceil(n_slices / 32)          # z-split; slice size adds no parallelism
-mem/worker   = xy_pixels * 32 * bytes_px * 2.5
+mem/worker   = xy_pixels * 32 * bytes_px * 6.0   # measured, see below
 workers      = min(cores, tasks, usable_ram // mem_per_worker, --cpus)
 threads/worker = min(cores // workers, 16)
 ```
@@ -99,8 +99,13 @@ a machine-sized thread pool from swamping the node.
 
 ### When it warns
 
-Per-worker memory is an estimate — 2.5x the raw slab — not a measurement. On most
-datasets there is ample slack. On a very large stitch there is not: a plan can sit at
+Per-worker memory is a multiplier on the raw slab. The 6.0 was calibrated on the
+cluster from the `Peak memory` log line: a 3584² float32 stack (1.5 GiB slab) peaked
+at 9.4 GiB per worker during conversion. Every run prints that line for its own
+phase, so the figure can be re-checked whenever a new shape or dtype goes through.
+Downsampling is sized separately, from the peak the conversion phase just measured
+(`DOWNSAMPLE_PEAK_RATIO`, observed 2.2x, planned 2.5x). On most datasets there is
+ample slack. On a very large stitch there is not: a plan can sit at
 87% of the node, where a 25% underestimate is the difference between fitting and
 being OOM-killed hours in.
 
@@ -108,13 +113,13 @@ The run says so when that happens, and suggests a budget:
 
 ```
 Tight memory fit: 444.4 GiB planned against a 512.0 GiB limit. Per-worker memory
-is an estimate (2.5x the raw slab), not a measurement — if the real figure is more
+is an estimate (6.0x the raw slab), not a measurement — if the real figure is more
 than 25% higher this run will be OOM-killed. For a first run at this size use
 --max-memory 384G, then relax it once you have seen the actual usage.
 ```
 
 Acting on it costs throughput and buys margin — on a 10507 x 10512 x 10339 uint16
-stitch, 27 workers drops to 20 and the run takes 17 waves instead of 12. Worth it
+stitch, 11 workers drops to 8 and the run takes 41 waves instead of 30. Worth it
 once, to measure; not worth it forever.
 
 The check measures against the limit the machine enforces, not against the budget.
