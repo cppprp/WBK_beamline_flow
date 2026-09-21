@@ -119,6 +119,14 @@ def build_layer(
     ), cluster_tools.get_executor("multiprocessing", max_workers=workers) as executor:
         layer.downsample(
             sampling_mode=SamplingModes.parse(sampling_mode),
+            # Keep mag 1's shard shape (4096 x 4096 x 32) for the whole pyramid.
+            # Left unset, webknossos 4.x gives the coarser mags its generic
+            # 1024^3 default, and since one downsample job is one target shard
+            # that turns a 2000-slice stack's mag 2 into 4 jobs and every
+            # coarser level into a single job — most of the pool sits idle and
+            # the pyramid takes longer than the conversion. 3.x copied the
+            # source mag's shard shape; this restores that.
+            shard_shape=layer.get_mag(1).info.shard_shape,
             executor=executor,
         )
 

@@ -44,6 +44,14 @@ def main() -> int:
     r.ok("compressed", "zstd" in codecs or "blosc" in codecs)
     r.eq("shard shape", meta["chunk_grid"]["configuration"]["chunk_shape"], [1, 4096, 4096, 32])
 
+    # The pyramid must keep mag 1's shard shape. webknossos 4.x would otherwise
+    # give it 1024^3 shards, and since a downsample job is one target shard,
+    # that collapses a big stack's pyramid onto a handful of workers.
+    for mag_dir in sorted(p for p in mag1.parent.iterdir() if p.is_dir() and p.name != "1"):
+        mag_meta = json.loads((mag_dir / "zarr.json").read_text())
+        r.eq(f"mag {mag_dir.name} keeps the shard shape",
+             mag_meta["chunk_grid"]["configuration"]["chunk_shape"], [1, 4096, 4096, 32])
+
     print("— roundtrip")
     # WEBKNOSSOS stores (x, y, z); tifffile returns (row=y, col=x), hence the transpose.
     view = layer.get_mag("1").read()[0]

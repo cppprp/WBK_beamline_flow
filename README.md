@@ -135,6 +135,16 @@ allocation.
 A thread limit you set yourself in the environment is always respected; the run only
 manages variables it set itself.
 
+### The pyramid
+
+Downsampling is parallelised per target shard. webknossos 4.x gives coarser mags a
+generic 1024³ shard unless told otherwise, and on a 2000-slice stack that leaves mag 2
+with 4 jobs and every coarser level with one — the pyramid then takes longer than the
+conversion (measured: 4:27 for mag 2 alone, 1:42 for mag 4, on a 3584² float32 stack).
+`convert.py` passes mag 1's 4096 × 4096 × 32 shard shape through, as webknossos 3.x did
+implicitly, which gives 16 and 8 jobs for the same levels. The pyramid uses the same
+shard shape as mag 1 in every dataset this publishes.
+
 ## Reading the datasets with external tools
 
 WEBKNOSSOS transfers **mags only** when publishing — each mag directory is renamed
