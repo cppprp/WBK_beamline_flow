@@ -53,8 +53,6 @@ fail() { echo "error: $*" >&2; exit 2; }
 if [[ -z "${SLURM_JOB_ID:-}" ]]; then
     BENCH_LOGS="${BENCH_LOGS:-$(cd "$(dirname "$0")" && pwd -P)/logs}"
     [[ -x "$UV" ]] || fail "uv not found at $UV. Set UV=/path/to/uv."
-    [[ -d "$STACK" ]] || fail "stack directory not found: $STACK"
-    [[ -e "$TARGET" ]] && fail "target already exists: $TARGET (pick a fresh directory so the write is measured, not an overwrite)"
     mkdir -p "$BENCH_LOGS"
 
     submit=("--output=$BENCH_LOGS/bench_%j.log")
@@ -67,10 +65,13 @@ fi
 
 # ── Inside the allocation ─────────────────────────────────────────────────────
 
+# The login node has neither mount, so the inputs can only be checked here.
 for path in /morningstar /mnt/beegfs7; do
     [[ -e "$path" ]] && mountpoint -q "$(readlink -f "$path")" \
         || fail "$path is not reachable on $(hostname)"
 done
+[[ -d "$STACK" ]] || fail "stack directory not found: $STACK"
+[[ -e "$TARGET" ]] && fail "target already exists: $TARGET (pick a fresh directory so the write is measured, not an overwrite)"
 
 echo "host:       $(hostname)"
 echo "job:        $SLURM_JOB_ID"
