@@ -31,7 +31,7 @@ from .naming import (
 )
 from .publish import PublishRequest, publish
 from .resources import parse_memory_size
-from .sidecar import find_mx_cube_metadata
+from .metadata import find_mx_cube_metadata
 
 
 def parse_voxel_size(value: str) -> tuple[float, float, float]:
@@ -104,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         "--input_dir",
         required=True,
         type=Path,
-        help="The recon or stitching directory. Also where the sidecar is written.",
+        help="The recon or stitching directory. Its name keys the publication record in the metadata file.",
     )
     parser.add_argument(
         "--stack_path",
@@ -165,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--dataset-id",
-        help="Overwrite this specific dataset, skipping sidecar and name lookup",
+        help="Overwrite this specific dataset, skipping the recorded id and the name lookup",
     )
     parser.add_argument(
         "--replace-legacy",

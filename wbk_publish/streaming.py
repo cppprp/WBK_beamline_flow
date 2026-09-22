@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Generate a shareable OME-NGFF 0.5 zarr3 link for a published dataset."
     )
-    parser.add_argument("dataset_id", nargs="?", help="Dataset id (see the sidecar)")
+    parser.add_argument("dataset_id", nargs="?", help="Dataset id (see the webknossos block in meta_<run>.json)")
     parser.add_argument("--annotation", help="Use this annotation instead of making one")
     parser.add_argument("--layer", help="Only print this layer's URL", default="xray")
     parser.add_argument(

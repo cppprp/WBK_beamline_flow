@@ -37,7 +37,7 @@ def main() -> int:
     r.ok("names the file", bad.name in msg)
     r.ok("says nothing was published", "Nothing was published" in msg)
     r.ok("suggests comparing file sizes", "smaller than its neighbours" in msg)
-    r.ok("says a re-run is safe", "sidecar records the dataset id" in msg)
+    r.ok("says a re-run is safe", "metadata file records the dataset id" in msg)
 
     print("— an unplaceable path still reports cleanly")
     msg = _conversion_message(CorruptImageError("bad", path=UPath("/elsewhere/x.tif")), tiffs)

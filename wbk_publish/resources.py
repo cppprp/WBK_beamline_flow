@@ -52,17 +52,16 @@ DOWNSAMPLE_PEAK_RATIO = 2.5
 # Leave the OS, page cache and the controller process room to breathe.
 RAM_SAFETY_FRACTION = 0.9
 
-# How wrong the per-worker estimate could be and still have to fit. A plan that
-# would exceed the machine if the real figure were this much higher is worth
-# flagging: the estimate is a multiplier on the raw slab, not a measurement, and on
-# a large stitch a modest underestimate is the difference between fitting and being
-# OOM-killed hours in.
+# How wrong the per-worker figure could be and still have to fit. A plan that
+# would exceed the machine if the real figure were this much higher is flagged.
+# MEMORY_OVERHEAD_FACTOR is measured (a 3584^2 float32 run came in at 0.91x it),
+# so 10% covers shape and dtype variation; it must stay below the headroom
+# RAM_SAFETY_FRACTION leaves (10%), or a plan that merely fills its budget would
+# trip the warning on every memory-limited run and it would be ignored.
 #
 # The test is against the hard limit the OOM killer enforces, not against the
-# budget. When memory is the binding constraint the plan always fills its budget,
-# so comparing peak to budget would fire on every large run — including after the
-# operator lowered the budget on this warning's own advice.
-ESTIMATE_MARGIN = 0.25
+# budget: when memory is the binding constraint the plan always fills its budget.
+ESTIMATE_MARGIN = 0.10
 
 # Spare cores are handed to each worker as threads, but only up to a point: BLAS
 # and zstd stop scaling long before a whole node's worth of threads, and past that

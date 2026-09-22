@@ -5,7 +5,7 @@ Two flows, chosen automatically:
   fresh upload   — no dataset exists yet. Convert, then hand the whole dataset
                    over with Dataset.upload().
 
-  layer overwrite— a dataset already exists (its id came from the sidecar).
+  layer overwrite— a dataset already exists (its id is in meta_<run>.json).
                    Convert, then replace just that one layer on the existing
                    dataset. The dataset id, and therefore every URL and
                    annotation pointing at it, survives untouched.
@@ -45,10 +45,11 @@ from .remote import (
     is_virtual,
     resolve_teams,
 )
-from .sidecar import (
+from .metadata import (
     load_mx_cube_metadata,
     read_dataset_id,
-    write_sidecar,
+    record_publication,
+    report_staleness,
 )
 
 
@@ -123,16 +124,15 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
             remote_ds = _overwrite_layer(request, tiff_files, plan, dataset_id, log)
 
         with webknossos_context(token=request.token, url=WK_URL):
-            display_metadata = attach_metadata(remote_ds, raw_metadata, log)
+            attach_metadata(remote_ds, raw_metadata, log)
             resolved_id = remote_ds.dataset_id
 
-        write_sidecar(
+        record_publication(
+            request.metadata_file,
             request.input_dir,
             dataset_id=resolved_id,
             dataset_name=request.dataset_name,
             layer_name=request.layer_name,
-            raw_metadata=raw_metadata,
-            display_metadata=display_metadata,
             log=log,
         )
 
@@ -195,7 +195,7 @@ def _legacy_message(dataset_id: str, request: PublishRequest) -> str:
         "\n"
         "To publish this reconstruction, re-run with --replace-legacy. That creates a\n"
         "NEW dataset (new id) alongside the old one and records the new id in the\n"
-        "sidecar, so every later re-run updates it in place. Delete the old dataset\n"
+        "metadata file, so every later re-run updates it in place. Delete the old dataset\n"
         f"in WEBKNOSSOS afterwards: {WK_URL}/datasets/{dataset_id}"
     )
 
@@ -206,18 +206,20 @@ def _legacy_message(dataset_id: str, request: PublishRequest) -> str:
 def _resolve_dataset_id(request: PublishRequest, log: logging.Logger) -> str | None:
     """Find the dataset this run should update, if there is one.
 
-    Order: explicit override, then the sidecar, then a lookup by name for
-    datasets published before the sidecar recorded ids.
+    Order: explicit override, then the record in meta_<run>.json (or the legacy
+    sidecar), then a lookup by name for datasets published before ids were
+    recorded.
     """
     if request.dataset_id:
         log.info(f"Using dataset id from the command line: {request.dataset_id}")
         return request.dataset_id
 
-    recorded = read_dataset_id(request.input_dir, log)
+    recorded = read_dataset_id(request.metadata_file, request.input_dir, log)
     if recorded:
+        report_staleness(request.metadata_file, request.input_dir, log)
         return recorded
 
-    log.info("No dataset id in the sidecar — checking whether one exists by name")
+    log.info("No recorded dataset id — checking whether one exists by name")
     with webknossos_context(token=request.token, url=WK_URL):
         return find_dataset_id_by_name(
             [request.dataset_name, request.readable_name], log
@@ -459,7 +461,7 @@ def _timeout_message(
         "What to do:\n"
         f"  1. Check the dataset in the browser: {WK_URL}/datasets/{dataset_id}\n"
         "  2. Wait for the delete to finish (watch the dataset directory shrink).\n"
-        "  3. Re-run the same command. It is safe: the sidecar records the dataset\n"
+        "  3. Re-run the same command. It is safe: the metadata file records the dataset\n"
         "     id, so the re-run overwrites the same dataset rather than duplicating\n"
         f"     it. To be explicit, pass --dataset-id {dataset_id}\n"
         "\n"

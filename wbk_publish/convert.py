@@ -209,7 +209,7 @@ def _conversion_message(exc: Exception, tiff_files: list[Path]) -> str:
             "The slice could not be read — damaged, or written incompletely. A",
             "truncated file is usually smaller than its neighbours, so comparing",
             "sizes around it is the quickest check. Fix or replace it and re-run:",
-            "the sidecar records the dataset id, so a re-run overwrites rather",
+            "the metadata file records the dataset id, so a re-run overwrites rather",
             "than duplicates.",
         ]
 

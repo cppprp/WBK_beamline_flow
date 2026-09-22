@@ -78,6 +78,27 @@ exported into the job. Anything else in the submitting environment, including
 `WBK_LOCAL=1` with `--dry-run` is the way to check a path from the login node
 before spending an allocation.
 
+## The storage path
+
+Everything the node writes to morningstar goes through NFS over InfiniBand. Two
+server-side settings decide how fast that is, and both were wrong once:
+
+- **The export must be `async`.** With `sync`, every NFS write is committed to
+  disk before it is acknowledged, and on ZFS without a separate log device that
+  means ~30–50 MB/s per stream, ~280 MB/s across the server's 8 threads —
+  regardless of how the client writes (measured: conversion, plain `cp`, `dd`
+  all hit the same ceiling; `fio` went from 29.7 to 610 MiB/s when IT switched
+  the export for 10.40.15.108 to `async`). The trade is that a morningstar crash
+  can lose the last few seconds of NFS writes; for this pipeline that is a
+  conversion to re-run, and the old local-disk system carried the same exposure.
+- **nfsd threads**: the distribution default is 8. Less critical with `async`,
+  but 49 parallel writers through 8 server threads still queue; `threads=64`
+  under `[nfsd]` in `/etc/nfs.conf` is the usual setting for a 192-core server.
+
+`bench_convert.sh` times the plain `webknossos convert` CLI against a chosen target
+and library version, with network and NFS counters — it is how the above was found,
+and the thing to reach for if conversions get slow again.
+
 ## How parallelism is chosen
 
 `--cpus` (beamline) and `--jobs` (manual) are **upper bounds, not targets**. The actual
@@ -93,9 +114,13 @@ threads/worker = min(cores // workers, 16)
 
 Two things this prevents. Sizing workers from the core count would put 176 workers on
 a large stitch asking for more RAM than the node has, and an OOM there kills the whole
-run — so memory wins. And each worker's numeric libraries are capped to the derived
-thread count rather than the machine's core count, which is what stops N workers times
-a machine-sized thread pool from swamping the node.
+run — so memory wins. And each worker's thread pools are capped to the derived thread
+count rather than the machine's core count — numpy/BLAS/blosc/numba through their
+environment variables, and tensorstore (all zarr3 I/O) by replacing the context
+webknossos opens arrays with, since it has no variable. This is what stops N workers
+times a machine-sized pool from swamping the node: uncapped, tensorstore alone starts
+~180 threads per worker on a 176-core node, and 50 workers of that exceed the process
+limit and kill the pool.
 
 ### When it warns
 
@@ -105,22 +130,18 @@ at 9.4 GiB per worker during conversion. Every run prints that line for its own
 phase, so the figure can be re-checked whenever a new shape or dtype goes through.
 Downsampling is sized separately, from the peak the conversion phase just measured
 (`DOWNSAMPLE_PEAK_RATIO`, observed 2.2x, planned 2.5x). On most datasets there is
-ample slack. On a very large stitch there is not: a plan can sit at
-87% of the node, where a 25% underestimate is the difference between fitting and
-being OOM-killed hours in.
+ample slack. The run warns when the plan would not survive the figure being 10%
+higher than planned — which a plan filling its 90% budget does not trip, but one
+pushed past that by `--cpus` or a lowered `--max-memory` can.
 
 The run says so when that happens, and suggests a budget:
 
 ```
 Tight memory fit: 444.4 GiB planned against a 512.0 GiB limit. Per-worker memory
 is an estimate (6.0x the raw slab), not a measurement — if the real figure is more
-than 25% higher this run will be OOM-killed. For a first run at this size use
+than 10% higher this run will be OOM-killed. For a first run at this size use
 --max-memory 384G, then relax it once you have seen the actual usage.
 ```
-
-Acting on it costs throughput and buys margin — on a 10507 x 10512 x 10339 uint16
-stitch, 11 workers drops to 8 and the run takes 41 waves instead of 30. Worth it
-once, to measure; not worth it forever.
 
 The check measures against the limit the machine enforces, not against the budget.
 When memory is the binding constraint the plan always fills whatever budget it is
@@ -233,36 +254,59 @@ for.
 ## How a run decides what to do
 
 1. `--dataset-id`, if given.
-2. The `dataset_id` recorded in `dataset-metadata.json` beside the input data.
-3. A lookup by name, for datasets published before the sidecar carried an id.
+2. The `dataset_id` recorded for this directory in `meta_<run>.json` (or, for
+   datasets published before the record moved there, in the old
+   `dataset-metadata.json` sidecar beside the input data — read, never written).
+3. A lookup by name, for datasets published before ids were recorded.
 4. Otherwise: fresh upload.
 
 If step 3 finds several candidates, or cannot reach the server, the run stops
 rather than guessing — a wrong guess either overwrites the wrong dataset or
 publishes a duplicate. Pass `--dataset-id` to resolve it.
 
-## The sidecar
+## The metadata file
 
-`dataset-metadata.json`, written into the recon/stitching directory after every
-successful publish. It carries both the MX-Cube acquisition metadata that was
-published and the dataset identity:
+MX-Cube writes `meta_<run>.json` into the sample directory, one per
+reconstruction, and the recon tool edits it in place when a reconstruction is
+redone. It is the provenance of the data, so it is also where a publish records
+what it did — under a single top-level key, keyed by the directory that was
+published:
 
 ```json
 {
-  "dataset_id": "6710f...",
-  "dataset_name": "20250921_p3l-eduke_MA040_1",
-  "webknossos_url": "https://webknossos.embl-hamburg.de",
-  "layer": "xray",
-  "published_at": "2026-08-28T09:14:03+00:00",
-  "dataset": { "...raw meta_N.json..." },
-  "dataset_display": { "...remapped for the WEBKNOSSOS UI..." }
+  "betadelta": 0.02,
+  "distances_mm": [73, 77, 83, 92],
+  "sample_run": 1,
+  "...": "...the rest of the MX-Cube keys, untouched...",
+  "energy_kev": 18.000267327900946,
+  "webknossos": {
+    "recon_111_1": {
+      "dataset_id": "68d2a1f04c3b9e0017a3c5d1",
+      "dataset_name": "20260111_p3l-faberjw_123-10-T4_1",
+      "webknossos_url": "https://webknossos.embl-hamburg.de",
+      "layer": "xray",
+      "published_at": "2026-07-09T08:02:51+00:00"
+    }
+  },
+  "last_updated": "2026-07-08T17:38:05Z"
 }
 ```
 
-It lives next to the *input* data rather than in the dataset's storage
-directory, because the id has to be findable before the id is known. Deleting
-it is recoverable — the next run falls back to a lookup by name — but it is the
-authoritative record, so keep it with the data.
+Everything outside `webknossos` is attached to the dataset as display metadata,
+exactly as before. Re-publishing the same directory keeps its `dataset_id` — that
+is what makes the run replace the layer instead of creating a second dataset —
+and only moves `published_at`. A tiled scan has `recon_111_1`, `recon_121_1` and
+`stitching_1` beside one `meta_1.json`; each published directory gets its own
+entry, so they never overwrite each other.
+
+`last_updated` is set by the recon tool. When it is later than `published_at`, the
+run (and `--dry-run`) logs that the metadata was updated after the last publish and
+WEBKNOSSOS is behind.
+
+If the file is missing (archive data published by hand) it is created with only
+the `webknossos` block. If it exists but is not valid JSON, it is left alone: the
+publish succeeds, the id is printed in the log, and the next run finds the dataset
+by name.
 
 ## Configuration
 
@@ -288,7 +332,7 @@ an `os.rename()` and cannot cross a mount point.
 | `publish.py` | Pipeline: locking, flow selection, fresh upload, layer overwrite |
 | `convert.py` | TIFF stack → zarr3 layer + mag pyramid, in staging |
 | `remote.py` | Folders, teams, metadata, dataset lookup |
-| `sidecar.py` | `dataset-metadata.json` read/write, MX-Cube key mapping |
+| `metadata.py` | `meta_<run>.json`: the publication record, MX-Cube key mapping |
 | `ngff.py` | Restores zarr3 group metadata so external tools can read the output |
 | `streaming.py` | Mints shareable annotation private links to a dataset's layers |
 | `naming.py` | Path → dataset name, and the convention it must match |

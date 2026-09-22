@@ -124,28 +124,26 @@ eq("small recon: silent", quiet_small.warning, None)
 quiet_med = plan_workers(StackShape(2048, 2000*2000, 4), **NODE)
 eq("2000^2 float32: silent", quiet_med.warning, None)
 
-loud = plan_workers(stitch, **NODE)
-if loud.warning and "--max-memory" in loud.warning:
-    print(f"  ok   big stitch warns and suggests a budget")
-else:
-    fails.append("big stitch did not warn"); print(f"  FAIL big stitch warning: {loud.warning!r}")
+# The per-worker factor is measured, so a plan that fills its 90% budget is the
+# normal case, not a risk — a warning there would fire on every large run.
+full = plan_workers(stitch, **NODE)
+eq("big stitch filling its budget: silent", full.warning, None)
+eq("...and it is memory-limited", full.limited_by, "memory")
 
-# Acting on the advice must silence it — otherwise the advice is useless.
+# A budget raised above the machine has no headroom left: that must warn, and
+# the advice it gives (a lower --max-memory) must silence it.
+over = plan_workers(stitch, cores=NODE_CORES, total_ram=NODE_RAM + 64*GiB, hard_limit=NODE_RAM)
+if over.warning and "--max-memory" in over.warning:
+    print("  ok   budget above the machine warns and suggests a budget")
+else:
+    fails.append("over-budget plan did not warn"); print(f"  FAIL over-budget warning: {over.warning!r}")
 acted = plan_workers(stitch, cores=NODE_CORES, total_ram=384*GiB, hard_limit=NODE_RAM)
 eq("following the advice silences it", acted.warning, None)
-if acted.workers >= loud.workers:
+if acted.workers >= over.workers:
     fails.append("lowering the budget did not reduce workers")
     print("  FAIL lowering the budget did not reduce workers")
 else:
-    print(f"  ok   workers drop {loud.workers} -> {acted.workers} for the safety margin")
-
-# The guard must measure the enforced limit, not the budget: a budget equal to the
-# machine has no margin, so it must still warn.
-no_margin = plan_workers(stitch, cores=NODE_CORES, total_ram=NODE_RAM, hard_limit=NODE_RAM)
-if no_margin.warning is None:
-    fails.append("no-margin plan should still warn"); print("  FAIL no-margin plan silent")
-else:
-    print("  ok   budget == machine still warns (no margin exists)")
+    print(f"  ok   workers drop {over.workers} -> {acted.workers} with the lower budget")
 
 print("— memory size parsing")
 eq("400G", parse_memory_size("400G"), 400 * GiB)

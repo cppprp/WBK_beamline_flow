@@ -6,7 +6,9 @@ fact, and a job that dies of memory pressure leaves no trace of how much it had.
 
 This samples the worker processes while the conversion runs and logs the peak —
 the largest single worker, and the total across all of them — against what the
-plan assumed. Logged periodically, not only at the end, so a run that is killed
+plan assumed. Threads are counted the same way, because a thread cap that is
+set but not honoured (tensorstore's pools, before they were bounded) shows up
+here and nowhere else: memory looked fine on the run that died of it. Logged periodically, not only at the end, so a run that is killed
 partway still leaves its last reading in the log. That is the number that
 calibrates `resources.MEMORY_OVERHEAD_FACTOR`.
 
@@ -50,6 +52,8 @@ class MemoryWatch:
         self.report_every = report_every
         self.peak_total = 0
         self.peak_worker = 0
+        self.peak_threads_worker = 0
+        self.peak_threads_total = 0
         self.workers_seen = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="memwatch", daemon=True)
@@ -73,10 +77,11 @@ class MemoryWatch:
         except psutil.Error:
             return
 
-        worker_rss = []
+        worker_rss, worker_threads = [], []
         for child in children:
             try:
                 worker_rss.append(child.memory_info().rss)
+                worker_threads.append(child.num_threads())
             except psutil.Error:  # gone between listing and reading; fine
                 continue
 
@@ -86,6 +91,8 @@ class MemoryWatch:
         self.workers_seen = max(self.workers_seen, len(worker_rss))
         self.peak_worker = max(self.peak_worker, max(worker_rss))
         self.peak_total = max(self.peak_total, sum(worker_rss))
+        self.peak_threads_worker = max(self.peak_threads_worker, max(worker_threads))
+        self.peak_threads_total = max(self.peak_threads_total, sum(worker_threads))
 
     def _run(self) -> None:
         last_report = time.monotonic()
@@ -110,16 +117,25 @@ class MemoryWatch:
             f"total {_fmt_bytes(self.peak_total)} across up to {self.workers_seen} workers"
         )
 
+        threads = (
+            f"Threads ({self.phase}): up to {self.peak_threads_worker} per worker, "
+            f"{self.peak_threads_total} across all workers "
+            f"(plan: {self.plan.threads_per_worker} per worker; a few more is normal — "
+            "the interpreter and the pool's own threads — a multiple is not)"
+        )
+
         if assumed < _COMPARABLE_FROM:
             self.log.info(line + " (stack too small to check the plan against)")
+            self.log.info(threads)
             return
 
         ratio = self.peak_worker / assumed
         self.log.info(line + f" (plan assumed {_fmt_bytes(assumed)}/worker; actual is {ratio:.2f}x that)")
+        self.log.info(threads)
 
         if final and ratio > 1.15:
-            # The safety margin in resources.ESTIMATE_MARGIN is 25%. Past that,
-            # the sizing would have overcommitted the node on a bigger stack.
+            # Past the margin in resources.ESTIMATE_MARGIN, the sizing would have
+            # overcommitted the node on a bigger stack.
             knob = (
                 "DOWNSAMPLE_PEAK_RATIO" if self.phase == "downsampling"
                 else "MEMORY_OVERHEAD_FACTOR"

@@ -20,6 +20,39 @@ def _report(_ignored):
     }
 
 
+def _tensorstore_in_worker(_ignored):
+    """What a real worker does: import the package, then write a zarr3 array."""
+    import sys, tempfile
+    import numpy as np
+    import tensorstore as ts
+    import wbk_publish  # noqa: F401 - installs the cap from the environment
+
+    array_mod = sys.modules["webknossos.dataset.layer.view._array"]
+    spec = array_mod.TS_CONTEXT.spec.to_json()
+
+    # Exercise the pools so the threads exist, then count them.
+    arr = ts.open({
+        "driver": "zarr3", "kvstore": {"driver": "file", "path": tempfile.mkdtemp()},
+        "metadata": {"shape": [512, 512, 64], "data_type": "float32",
+                     "chunk_grid": {"name": "regular", "configuration": {"chunk_shape": [512, 512, 32]}},
+                     "codecs": [{"name": "sharding_indexed", "configuration": {
+                         "chunk_shape": [32, 32, 32],
+                         "codecs": [{"name": "bytes"}, {"name": "zstd", "configuration": {"level": 1}}]}}]},
+        "create": True}, context=array_mod.TS_CONTEXT).result()
+    arr[...] = np.zeros((512, 512, 64), "float32")
+    return {"limit": spec.get("data_copy_concurrency", {}).get("limit"),
+            "os_threads": _thread_count()}
+
+
+def _thread_count():
+    import subprocess, sys
+    pid = os.getpid()
+    if sys.platform == "darwin":
+        out = subprocess.check_output(["sh", "-c", f"ps -M {pid} | wc -l"])
+        return int(out) - 1
+    return len(os.listdir(f"/proc/{pid}/task"))
+
+
 def main():
     import cluster_tools
 
@@ -52,6 +85,15 @@ def main():
     for i, r in enumerate(results):
         eq(f"worker {i} OMP_NUM_THREADS", r["OMP_NUM_THREADS"], "3")
         eq(f"worker {i} BLOSC_NTHREADS", r["BLOSC_NTHREADS"], "3")
+
+    print("— tensorstore's pools are capped inside the workers")
+    with cluster_tools.get_executor("multiprocessing", max_workers=1) as ex:
+        ts_report = ex.submit(_tensorstore_in_worker, 0).result()
+    eq("worker context carries the cap", ts_report["limit"], 3)
+    # Uncapped, tensorstore starts ~1.5x the core count; capped at 3 a worker
+    # stays in the single digits plus the interpreter's own threads.
+    eq("worker OS threads bounded", ts_report["os_threads"] <= 12, True)
+    print(f"       ({ts_report['os_threads']} OS threads in the worker, {os.cpu_count()} cores)")
 
     print("— changing the cap for a second run also propagates")
     apply_thread_limit(7, log)

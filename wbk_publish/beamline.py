@@ -27,7 +27,7 @@ from .naming import (
 )
 from .publish import PublishRequest, publish
 from .resources import parse_memory_size
-from .sidecar import find_mx_cube_metadata
+from .metadata import find_mx_cube_metadata
 
 
 def build_request(args: argparse.Namespace) -> PublishRequest:
@@ -100,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--dataset-id",
-        help="Overwrite this specific dataset, skipping sidecar and name lookup",
+        help="Overwrite this specific dataset, skipping the recorded id and the name lookup",
     )
     parser.add_argument(
         "--replace-legacy",

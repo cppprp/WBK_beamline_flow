@@ -26,7 +26,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 CHECKS = [
-    ("check_naming", "path parsing, sidecar, MX-Cube metadata mapping"),
+    ("check_naming", "path parsing, the meta_<run>.json record, MX-Cube metadata mapping"),
     ("check_resources", "worker/thread sizing and the tight-memory guard"),
     ("check_threads", "thread caps reach spawned workers"),
     ("check_convert", "TIFF stack to zarr3, sharded and pixel-exact"),

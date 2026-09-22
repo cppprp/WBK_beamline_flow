@@ -8,7 +8,7 @@ import logging
 from webknossos import RemoteDataset, RemoteFolder, Team
 
 from .config import WK_URL, XIMG_TEAM
-from .sidecar import to_display_metadata
+from .metadata import to_display_metadata
 
 ROOT_FOLDER = "Datasets"
 
@@ -64,7 +64,7 @@ def resolve_teams(user_team_name: str, log: logging.Logger) -> list[Team]:
 
 
 def find_dataset_id_by_name(names: list[str], log: logging.Logger) -> str | None:
-    """Look up a dataset id by name — the fallback for datasets with no sidecar id.
+    """Look up a dataset id by name — the fallback for datasets with no recorded id.
 
     Several names are tried because a dataset is uploaded under its full
     `20250921_p3l-eduke_MA040_1` name and then renamed to the readable

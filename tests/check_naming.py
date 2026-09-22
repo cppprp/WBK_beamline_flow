@@ -1,4 +1,4 @@
-"""Naming, sidecar and metadata mapping — the pure logic, no server needed."""
+"""Naming, the metadata file and its display mapping — pure logic, no server needed."""
 
 import os
 from pathlib import Path
@@ -13,11 +13,13 @@ from wbk_publish.naming import (
     resolve_tiff_stack,
     validate_dataset_name,
 )
-from wbk_publish.sidecar import (
+from wbk_publish.metadata import (
+    find_mx_cube_metadata,
+    load_mx_cube_metadata,
     read_dataset_id,
-    read_sidecar,
+    record_publication,
+    report_staleness,
     to_display_metadata,
-    write_sidecar,
 )
 
 log = make_logger("check", verbose=False)
@@ -93,27 +95,87 @@ eq("order: mapped first", list(d)[-1], "unmapped_field")
 eq("raw not mutated", raw["distances_mm"], [1.5, 2.5])
 eq("empty in, empty out", to_display_metadata({}, log), {})
 
-print("— sidecar roundtrip")
-write_sidecar(
-    recon,
-    dataset_id="abc123",
-    dataset_name="20250921_p3l-eduke_MA040_1",
-    layer_name="xray",
-    raw_metadata=raw,
-    display_metadata=d,
-    log=log,
-)
-eq("id read back", read_dataset_id(recon, log), "abc123")
-sc = read_sidecar(recon)
-eq("keeps raw block", sc["dataset"]["energy_kev"], 18)
-eq("keeps display block", sc["dataset_display"]["User"], "eduke")
-eq("records layer", sc["layer"], "xray")
-eq("no tmp left", (recon / "dataset-metadata.json.tmp").exists(), False)
+print("— publication record in meta_<run>.json")
+import json
 
-(recon / "dataset-metadata.json").write_text("{ broken")
-eq("corrupt sidecar tolerated", read_dataset_id(recon, log), None)
+meta = find_mx_cube_metadata(recon, "1")
+eq("meta file sits in the sample directory", meta, recon.parent / "meta_1.json")
+mx_cube = {
+    "betadelta": 0.05, "distances_mm": [73, 77], "sample_run": 1,
+    "operator": " Anzhelika ASVETLOVE", "energy_kev": 18.000267327900946,
+}
+meta.write_text(json.dumps(mx_cube, indent=2))
+for stale in (recon / "dataset-metadata.json", recon.parent / "dataset-metadata.json"):
+    stale.unlink(missing_ok=True)
+
+eq("nothing recorded yet", read_dataset_id(meta, recon, log), None)
+record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
+                   layer_name="xray", log=log)
+data = json.loads(meta.read_text())
+eq("id read back", read_dataset_id(meta, recon, log), "abc123")
+eq("keyed by the input directory name", list(data["webknossos"]), ["recon_111_1"])
+eq("records the layer", data["webknossos"]["recon_111_1"]["layer"], "xray")
+eq("MX-Cube keys untouched", {k: v for k, v in data.items() if k != "webknossos"}, mx_cube)
+eq("MX-Cube key order kept", list(data)[:-1], list(mx_cube))
+eq("non-ascii stays readable", "\\u" in meta.read_text(), False)
+eq("no tmp left", (meta.parent / "meta_1.json.tmp").exists(), False)
+
+loaded = load_mx_cube_metadata(meta, log)
+eq("load drops our block", "webknossos" in loaded, False)
+eq("display never carries our block", "webknossos" in to_display_metadata(data, log), False)
+
+# A tiled scan: recon and stitching share the file, each with its own entry.
+tile_stitch = recon.parent / "stitching_1"
+tile_stitch.mkdir(exist_ok=True)
+record_publication(meta, tile_stitch, dataset_id="stitch9", dataset_name="x_stitching_1",
+                   layer_name="xray", log=log)
+data = json.loads(meta.read_text())
+eq("second dataset keyed alongside", sorted(data["webknossos"]), ["recon_111_1", "stitching_1"])
+eq("first entry survives", read_dataset_id(meta, recon, log), "abc123")
+eq("second entry read by its own dir", read_dataset_id(meta, tile_stitch, log), "stitch9")
+
+# Re-publish: same id, entry replaced not duplicated.
+record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
+                   layer_name="xray", log=log)
+eq("re-publish keeps one entry", len(json.loads(meta.read_text())["webknossos"]), 2)
+
+# The recon tool edited the file after the publish: our block survives and we notice.
+data = json.loads(meta.read_text())
+data["betadelta"] = 0.02
+data["last_updated"] = "2099-01-01T00:00:00Z"
+meta.write_text(json.dumps(data, indent=2))
+eq("id survives an edit", read_dataset_id(meta, recon, log), "abc123")
+import io, logging
+buf = io.StringIO(); h = logging.StreamHandler(buf); log.addHandler(h)
+report_staleness(meta, recon, log)
+log.removeHandler(h)
+eq("staleness reported", "after the last publish" in buf.getvalue(), True)
+
+# A different instance's record is ignored.
+data["webknossos"]["recon_111_1"]["webknossos_url"] = "https://elsewhere.example"
+meta.write_text(json.dumps(data))
+eq("other instance ignored", read_dataset_id(meta, recon, log), None)
+
+# Legacy sidecar in the input directory is still honoured, never written.
+meta.write_text(json.dumps(mx_cube))
+(recon / "dataset-metadata.json").write_text(json.dumps({"dataset_id": "old777", "webknossos_url": "https://webknossos.embl-hamburg.de"}))
+eq("legacy sidecar read", read_dataset_id(meta, recon, log), "old777")
+record_publication(meta, recon, dataset_id="old777", dataset_name="n", layer_name="xray", log=log)
+eq("meta file now preferred", "old777" in meta.read_text(), True)
 (recon / "dataset-metadata.json").unlink()
-eq("missing sidecar tolerated", read_dataset_id(recon, log), None)
+
+# Corrupt meta file: tolerated on read, never overwritten on write.
+meta.write_text("{ broken")
+eq("corrupt meta tolerated on read", read_dataset_id(meta, recon, log), None)
+eq("corrupt meta not overwritten", record_publication(meta, recon, dataset_id="x", dataset_name="n", layer_name="xray", log=log), None)
+eq("corrupt content intact", meta.read_text(), "{ broken")
+
+# No meta file at all (archive publish): created with only our block.
+meta.unlink()
+eq("missing meta tolerated", read_dataset_id(meta, recon, log), None)
+record_publication(meta, recon, dataset_id="new1", dataset_name="n", layer_name="xray", log=log)
+eq("created with only our block", list(json.loads(meta.read_text())), ["webknossos"])
+meta.unlink()
 
 print()
 print("FAILURES:" if fails else "ALL CHECKS PASSED")

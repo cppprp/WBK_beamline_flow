@@ -19,10 +19,24 @@ library. Two things make this workable:
     building the executor and the workers get the right value.
 
 A value the operator set themselves is never overwritten.
+
+tensorstore is the exception to the environment-variable approach. webknossos
+does all zarr3 I/O through it, and it sizes its data-copy and file-I/O pools
+from the machine's core count with no variable to say otherwise: ~180 threads
+per worker on a 176-core node, which at 50 workers exceeds the process limit and
+kills the pool ("Resource temporarily unavailable" from std::thread). The cap is
+passed through WBK_TENSORSTORE_THREADS and installed by `limit_tensorstore_threads`
+— in the parent when the limit is applied, and in every worker when it imports
+this package (spawned workers re-import the entry-point module, which imports
+`wbk_publish`).
 """
 
 import logging
 import os
+import sys
+
+# Read by tensorstore-using code in this package, not by tensorstore itself.
+TENSORSTORE_VAR = "WBK_TENSORSTORE_THREADS"
 
 _THREAD_VARS = (
     "OMP_NUM_THREADS",
@@ -30,6 +44,8 @@ _THREAD_VARS = (
     "OPENBLAS_NUM_THREADS",
     "BLOSC_NTHREADS",
     "NUMEXPR_NUM_THREADS",
+    "NUMBA_NUM_THREADS",
+    TENSORSTORE_VAR,
 )
 
 # Conservative until the real worker count is known. Low rather than high: an
@@ -80,3 +96,45 @@ def apply_thread_limit(threads: int, log: logging.Logger) -> None:
             f"Leaving operator-set thread limits unchanged: "
             + ", ".join(f"{var}={os.environ[var]}" for var in respected)
         )
+
+    limit_tensorstore_threads(int(os.environ[TENSORSTORE_VAR]))
+
+
+def limit_tensorstore_threads(threads: int) -> None:
+    """Bound tensorstore's thread pools in this process.
+
+    webknossos opens every array with one module-level `ts.Context`, imported by
+    name into several modules, so the limited context has to replace each of
+    those bindings (and the default argument that captured it). New arrays pick
+    it up from then on; nothing already open is affected.
+    """
+    import tensorstore as ts
+    import webknossos.dataset  # noqa: F401 - loads every module holding TS_CONTEXT
+
+    threads = max(1, threads)
+    limited = ts.Context(
+        ts.Context.Spec(
+            {
+                "data_copy_concurrency": {"limit": threads},
+                "file_io_concurrency": {"limit": threads},
+            }
+        )
+    )
+    for name, module in list(sys.modules.items()):
+        if name.startswith("webknossos") and getattr(module, "TS_CONTEXT", None) is not None:
+            module.TS_CONTEXT = limited
+
+    helpers = sys.modules["webknossos.dataset._utils.tensorstore_helpers"]
+    open_array = helpers.open_zarr3_array
+    if open_array.__defaults__:
+        open_array.__defaults__ = tuple(
+            limited if isinstance(default, ts.Context) else default
+            for default in open_array.__defaults__
+        )
+
+
+def install_tensorstore_limit_from_env() -> None:
+    """In a worker: apply the cap the parent put in the environment, if any."""
+    value = os.environ.get(TENSORSTORE_VAR)
+    if value and value.isdigit():
+        limit_tensorstore_threads(int(value))

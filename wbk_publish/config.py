@@ -34,10 +34,9 @@ DEFAULT_VOXEL_SIZE_NM = (650.0, 650.0, 650.0)
 # Worker counts are not configured here — they are derived per run from the stack
 # geometry and the machine's allocation. See resources.py.
 
-# Sidecar written next to the input data. Carries both the MX-Cube metadata and
-# the WEBKNOSSOS dataset identity, so a re-run can find the dataset it published
-# last time and replace a layer in place instead of creating a duplicate.
-SIDECAR_NAME = "dataset-metadata.json"
+# Publishes made before the record moved into meta_<run>.json wrote this sidecar
+# into the input directory. It is still read for the dataset id, never written.
+LEGACY_SIDECAR_NAME = "dataset-metadata.json"
 
 # ── MX-Cube metadata → WEBKNOSSOS display labels ──────────────────────────────
 # Order matters: metadata is presented in the WEBKNOSSOS UI in this order.
@@ -66,6 +65,7 @@ KEY_MAPPING = {
     "tiling_z_steps": "Tiling Z Steps",
     "tiling_z_delta_mm": "Tiling Z Delta (mm)",
     "file_path": "Path to Raw Data",
+    "last_updated": "Last Updated",  # stamped by the recon tool when it edits the file
 }
 
 
