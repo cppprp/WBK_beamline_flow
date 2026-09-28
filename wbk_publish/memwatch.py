@@ -13,7 +13,10 @@ partway still leaves its last reading in the log. That is the number that
 calibrates `resources.MEMORY_OVERHEAD_FACTOR`.
 
 Sampling is a daemon thread that only ever reads `/proc`; it cannot affect the
-conversion and never raises into it.
+conversion and never raises into it. It runs in the idle parent process, not in
+the workers. Every two seconds, because the figure that matters is the peak and
+a run has died between samples: ~100 reads from a virtual filesystem, well under
+a millisecond, against a node-minute of real work.
 """
 
 import logging
@@ -39,7 +42,7 @@ class MemoryWatch:
         *,
         phase: str = "conversion",
         assumed_per_worker: int | None = None,
-        sample_every: float = 5.0,
+        sample_every: float = 2.0,
         report_every: float = 60.0,
     ) -> None:
         self.log = log

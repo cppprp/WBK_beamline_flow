@@ -49,8 +49,13 @@ MEMORY_OVERHEAD_FACTOR = 6.0
 # the pyramid is an eighth of the data.
 DOWNSAMPLE_PEAK_RATIO = 2.5
 
-# Leave the OS, page cache and the controller process room to breathe.
-RAM_SAFETY_FRACTION = 0.9
+# The share of RAM the workers may hold. The rest is not spare — it is the page
+# cache the TIFF reads come through and the dirty pages the writes go out
+# through, and on this node the latter now moves at over a gigabyte a second.
+# A run planned at 90% (49 workers x 9.2 GiB of 503 GiB) died with a MemoryError
+# on a 1.5 GiB buffer while the workers held 420 GiB: the memory was there on
+# paper and not in practice.
+RAM_SAFETY_FRACTION = 0.75
 
 # How wrong the per-worker figure could be and still have to fit. A plan that
 # would exceed the machine if the real figure were this much higher is flagged.
@@ -91,7 +96,7 @@ class WorkerPlan:
     mem_per_worker: int
     cores: int
     usable_ram: int
-    limited_by: str  # cores | memory | tasks | requested
+    limited_by: str  # cores | memory | tasks | requested | waves
     warning: str | None = None
 
     def describe(self) -> str:
@@ -258,6 +263,16 @@ def plan_workers(
 
     limited_by = min(limits, key=lambda key: limits[key])
     workers = max(1, min(limits.values()))
+
+    # Tasks run in waves of `workers`. Once the wave count is fixed, extra
+    # workers only make the last wave emptier — 64 tasks take two waves whether
+    # there are 32 workers or 49, and the 49 cost 50% more memory for the same
+    # wall time. Spread the tasks evenly over the waves instead.
+    waves = math.ceil(tasks / workers)
+    balanced = math.ceil(tasks / waves)
+    if balanced < workers:
+        workers = balanced
+        limited_by = "waves"
 
     peak_ram = workers * mem_per_worker
 

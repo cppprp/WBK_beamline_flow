@@ -1,4 +1,5 @@
 import _support  # noqa: F401 - sets sys.path and env
+import math
 import os
 
 from wbk_publish.resources import (
@@ -45,12 +46,16 @@ for side in (2048, 4096, 8192):
         f"workers={p.workers:3d}  threads={p.threads_per_worker}  limited_by={p.limited_by}"
     )
 
-eq("2048^2 is core-limited", rows[0][1].limited_by, "cores")
-eq("2048^2 uses every core", rows[0][1].workers, NODE_CORES)
-# With the measured 6x factor a 4096^2 uint16 slab is 6 GiB per worker, so a
-# 512 GiB node fits ~76 of them — memory binds before the 176 cores do.
-eq("4096^2 is memory-limited", rows[1][1].limited_by, "memory")
-eq("4096^2 still uses most of the node", rows[1][1].workers >= 64, True)
+# 250 tasks over 176 cores is two waves; two waves of 125 is the same wall time
+# with 51 fewer processes holding memory, so the plan evens them out.
+eq("2048^2 is wave-balanced", rows[0][1].limited_by, "waves")
+eq("2048^2 keeps its wave count", math.ceil(rows[0][1].tasks / rows[0][1].workers), 2)
+eq("2048^2 waves are even", rows[0][1].workers, math.ceil(rows[0][1].tasks / 2))
+# With the measured 6x factor a 4096^2 uint16 slab is 6 GiB per worker: memory
+# binds before the 176 cores do, and the wave split then trims one more worker.
+eq("4096^2 is bounded by memory, then evened out", rows[1][1].limited_by, "waves")
+eq("4096^2 fits its budget", rows[1][1].workers * rows[1][1].mem_per_worker <= rows[1][1].usable_ram, True)
+eq("4096^2 still uses most of the node", rows[1][1].workers >= 48, True)
 eq("8192^2 is memory-limited", rows[2][1].limited_by, "memory")
 
 big = rows[2][1]
@@ -89,6 +94,17 @@ small = node(stack(1500, 2048))
 eq("1500 slices -> 47 tasks", small.tasks, 47)
 eq("workers capped at task count", small.workers, 47)
 eq("limited by tasks", small.limited_by, "tasks")
+
+print("— extra workers that do not save a wave are not taken")
+even = node(stack(2038, 3584, bytes_px=4))   # the beamline stack: 64 tasks
+eq("64 tasks", even.tasks, 64)
+eq("two full waves, not one and a stub", even.workers, 32)
+eq("limited by waves", even.limited_by, "waves")
+if even.workers * even.mem_per_worker > even.usable_ram:
+    fails.append("wave-balanced plan still exceeds the budget")
+    print("  FAIL wave-balanced plan exceeds the budget")
+else:
+    print(f"  ok   {even.workers * even.mem_per_worker/GiB:.0f} GiB of {even.usable_ram/GiB:.0f} GiB usable")
 
 print("— operator upper bound is respected")
 capped = node(stack(8000, 2048), max_workers=8)
@@ -130,9 +146,9 @@ full = plan_workers(stitch, **NODE)
 eq("big stitch filling its budget: silent", full.warning, None)
 eq("...and it is memory-limited", full.limited_by, "memory")
 
-# A budget raised above the machine has no headroom left: that must warn, and
-# the advice it gives (a lower --max-memory) must silence it.
-over = plan_workers(stitch, cores=NODE_CORES, total_ram=NODE_RAM + 64*GiB, hard_limit=NODE_RAM)
+# --max-memory well above the machine is the case the warning exists for: the
+# plan then fills a budget the node cannot honour. Its advice must silence it.
+over = plan_workers(stitch, cores=NODE_CORES, total_ram=2 * NODE_RAM, hard_limit=NODE_RAM)
 if over.warning and "--max-memory" in over.warning:
     print("  ok   budget above the machine warns and suggests a budget")
 else:

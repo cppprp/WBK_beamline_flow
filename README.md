@@ -108,9 +108,18 @@ machine's allocation:
 ```
 tasks        = ceil(n_slices / 32)          # z-split; slice size adds no parallelism
 mem/worker   = xy_pixels * 32 * bytes_px * 6.0   # measured, see below
+usable_ram   = total * 0.75                 # the rest is page cache, not spare
 workers      = min(cores, tasks, usable_ram // mem_per_worker, --cpus)
+waves        = ceil(tasks / workers)        # then spread the tasks evenly:
+workers      = ceil(tasks / waves)
 threads/worker = min(cores // workers, 16)
 ```
+
+The last two lines matter more than they look. Tasks run in waves, and once the
+wave count is fixed, extra workers only make the final wave emptier: 64 tasks take
+two waves whether there are 32 workers or 49, so the 49 cost 50% more memory for
+exactly the same wall time — and that overshoot is what killed a run with a
+`MemoryError` while the workers held 420 GiB of 503.
 
 Two things this prevents. Sizing workers from the core count would put 176 workers on
 a large stitch asking for more RAM than the node has, and an OOM there kills the whole
