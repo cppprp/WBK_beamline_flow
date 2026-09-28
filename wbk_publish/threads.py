@@ -23,9 +23,14 @@ A value the operator set themselves is never overwritten.
 tensorstore is the exception to the environment-variable approach. webknossos
 does all zarr3 I/O through it, and it sizes its data-copy and file-I/O pools
 from the machine's core count with no variable to say otherwise: ~180 threads
-per worker on a 176-core node, which at 50 workers exceeds the process limit and
-kills the pool ("Resource temporarily unavailable" from std::thread). The cap is
-passed through WBK_TENSORSTORE_THREADS and installed by `limit_tensorstore_threads`
+per worker on a 176-core node, so 50 workers ask for ~9,000. That is not a
+resource limit on this cluster (`ulimit -u` is 513,072) and raising the cap to
+32 changed conversion time by three seconds — the pool crashes it was first
+introduced for turned out to be memory exhaustion, not thread exhaustion, and
+are fixed in resources.py. It stays because a worker sized for 176 cores when
+it has been given 5 is simply wrong, and keeping the count near the plan makes
+the "Threads" log line mean something. The cap is passed through
+WBK_TENSORSTORE_THREADS and installed by `limit_tensorstore_threads`
 — in the parent when the limit is applied, and in every worker when it imports
 this package (spawned workers re-import the entry-point module, which imports
 `wbk_publish`).

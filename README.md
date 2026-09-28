@@ -128,8 +128,9 @@ count rather than the machine's core count — numpy/BLAS/blosc/numba through th
 environment variables, and tensorstore (all zarr3 I/O) by replacing the context
 webknossos opens arrays with, since it has no variable. This is what stops N workers
 times a machine-sized pool from swamping the node: uncapped, tensorstore alone starts
-~180 threads per worker on a 176-core node, and 50 workers of that exceed the process
-limit and kill the pool.
+~180 threads per worker on a 176-core node. That is within the cluster's limits
+(`ulimit -u` is 513,072) and lifting it measurably changes nothing, so the cap is
+hygiene rather than a fix — a worker given 5 cores should not size its pools for 176.
 
 ### When it warns
 
