@@ -33,10 +33,13 @@ def fmt(nbytes: float, seconds: float) -> str:
 
 
 def main() -> int:
-    import wbk_publish  # noqa: F401 - installs the thread caps the real run uses
+    import wbk_publish  # noqa: F401 - must precede numpy for the caps to take
     import cluster_tools
     import tifffile
     from webknossos import DataFormat, Dataset
+
+    from wbk_publish.logs import make_logger
+    from wbk_publish.threads import apply_thread_limit
 
     args = sys.argv[1:]
     if not args:
@@ -46,6 +49,12 @@ def main() -> int:
     stack = Path(args[0])
     n_slices = int(args[1]) if len(args) > 1 else 64
     targets = [Path(t) for t in (args[2:] or ["/dev/shm", "/morningstar/tmp"])]
+
+    # Match a real worker. Without this the benchmark would inherit the
+    # import-time default of 2 and its rates would not compare with a run whose
+    # plan gave each worker 5. WBK_BENCH_THREADS overrides for a sweep.
+    apply_thread_limit(int(os.environ.get("WBK_BENCH_THREADS", "5")),
+                       make_logger("bench", verbose=False))
 
     files = sorted(list(stack.glob("*.tif")) + list(stack.glob("*.tiff")))[:n_slices]
     if not files:
