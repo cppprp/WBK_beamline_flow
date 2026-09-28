@@ -1,4 +1,11 @@
-"""Where does a conversion task's time actually go?
+#!/bin/sh
+# Runs under the project venv beside this script, so it needs neither uv on
+# PATH nor an activated environment. The line below is four adjacent string
+# literals to Python (a harmless expression) and an exec to sh. It must stay
+# free of nested quotes, or Python stops parsing it as strings.
+"exec" "$(dirname $0)/.venv/bin/python" "$0" "$@"
+
+USAGE = """Where does a conversion task's time actually go?
 
 The outside numbers stopped being informative: a 2038-slice stack converts at
 327 MB/s of output while the node reads its TIFFs at 1890 MB/s, writes 32
@@ -18,9 +25,9 @@ from everything else. Comparing compressed with raw separates the codec.
     ./bench_phases.py <tiff_stack> [n_slices] [target_dir ...]
 
 Defaults to 64 slices (two tasks' worth) into /dev/shm and /morningstar/tmp.
-Run it on the node, inside an allocation.
+Run it on the node, inside an allocation. WBK_BENCH_THREADS overrides the
+per-worker thread count (default 5, what a 32-worker plan gives each worker).
 """
-
 import os
 import shutil
 import sys
@@ -43,7 +50,7 @@ def main() -> int:
 
     args = sys.argv[1:]
     if not args:
-        print(__doc__)
+        print(USAGE)
         return 2
 
     stack = Path(args[0])
