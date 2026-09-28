@@ -39,15 +39,15 @@ BATCH_Z = DEFAULT_SHARD_SHAPE_FROM_IMAGES.z
 # log line whenever a new data shape or dtype goes through.
 MEMORY_OVERHEAD_FACTOR = 6.0
 
-# Downsampling has a different profile. A worker was observed at 2.2x the
-# conversion-phase peak (21 GiB against 9.4) — that was with the 1024^3 target
-# shards webknossos 4.x hands out by default, where one job assembles a 4 GiB
-# float32 shard plus its working copies. convert.py now keeps mag 1's flat
-# shard shape for the pyramid, which should bring this well down; until a run
-# has measured it, the downsample phase is sized from the conversion peak
-# *measured in the same run*, times this. Fewer workers there costs little —
-# the pyramid is an eighth of the data.
-DOWNSAMPLE_PEAK_RATIO = 2.5
+# Downsampling, as a multiple of the conversion peak measured in the same run.
+# Once the pyramid keeps mag 1's flat shard shape (see convert.py) a downsample
+# worker is the smaller of the two: 8.4 GiB against 9.8 on the 3584^2 float32
+# stack, i.e. 0.86x. 1.2 leaves headroom above that without throwing away
+# workers — and workers matter here, because a downsample job is one target
+# shard, so mag 2 of that stack is 32 jobs and anything under 32 workers runs
+# it in multiple waves. The earlier 2.5 was measured against the 1024^3 shards
+# 4.x used before, where one job assembled a 4 GiB buffer.
+DOWNSAMPLE_PEAK_RATIO = 1.2
 
 # The share of RAM the workers may hold. The rest is not spare — it is the page
 # cache the TIFF reads come through and the dirty pages the writes go out

@@ -58,6 +58,7 @@ class MemoryWatch:
         self.peak_threads_worker = 0
         self.peak_threads_total = 0
         self.workers_seen = 0
+        self._cpu_samples: list[float] = []
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="memwatch", daemon=True)
 
@@ -74,6 +75,15 @@ class MemoryWatch:
     # ── sampling ──────────────────────────────────────────────────────────────
 
     def _sample(self) -> None:
+        # Whole-node utilisation since the previous sample. It answers the
+        # question the timings alone cannot: whether a phase is waiting on the
+        # cores or on the storage. Only meaningful under --exclusive, which is
+        # how these jobs run.
+        try:
+            self._cpu_samples.append(psutil.cpu_percent(interval=None))
+        except psutil.Error:
+            pass
+
         try:
             me = psutil.Process()
             children = me.children(recursive=True)
@@ -108,6 +118,17 @@ class MemoryWatch:
     # ── reporting ─────────────────────────────────────────────────────────────
 
     def _report(self, *, final: bool) -> None:
+        # The first cpu_percent() call only starts the clock; it reads 0.0.
+        busy = [c for c in self._cpu_samples[1:]]
+        if busy:
+            mean = sum(busy) / len(busy)
+            self.log.info(
+                f"CPU ({self.phase}): {mean:.0f}% of {psutil.cpu_count()} cores busy on "
+                f"average, peak {max(busy):.0f}% — "
+                + ("cores are the limit" if mean >= 80 else
+                   "not CPU-bound; the limit is I/O or too few workers")
+            )
+
         if self.workers_seen == 0:
             if final:
                 self.log.info("Memory: no worker processes were observed")
