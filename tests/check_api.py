@@ -87,6 +87,17 @@ def main():
            isinstance(attr_obj, property) and attr_obj.fset is not None)
     ok("RemoteDataset.dataset_id", hasattr(wk.RemoteDataset, "dataset_id"))
 
+    # The date-qualified directory name is the only unique handle on a dataset
+    # whose display name has been changed, so resolving it is load-bearing for
+    # re-published samples. It is a private API; pin it so an upgrade that moves
+    # it fails here rather than silently falling back to an ambiguous search.
+    from webknossos.client.api_client.wk_api_client import WkApiClient
+    from webknossos.client.context import _get_api_client  # noqa: F401
+    ok("client.context._get_api_client", callable(_get_api_client))
+    needs("WkApiClient.dataset_id_from_name", WkApiClient.dataset_id_from_name,
+          {"directory_name", "organization_id"})
+    ok("User.organization_id", hasattr(wk.User, "organization_id"))
+
     print("— cluster_tools: spawn is what makes the thread cap reach workers")
     ex = cluster_tools.get_executor("multiprocessing", max_workers=1)
     method = ex._mp_context.get_start_method()

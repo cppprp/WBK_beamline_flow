@@ -30,13 +30,38 @@ from webknossos.dataset.defaults import DEFAULT_SHARD_SHAPE_FROM_IMAGES
 
 BATCH_Z = DEFAULT_SHARD_SHAPE_FROM_IMAGES.z
 
-# Peak worker memory during conversion, as a multiple of the raw slab (full xy
-# extent x 32 slices x bytes per pixel). Measured, not reasoned: a 3584^2 float32
-# stack (1.53 GiB slab) peaked at 9.4 GiB per worker on webknossos 4.0 — the
-# decoded slices, the assembled array, a transposed copy for the zarr axis order,
-# and the 4096^2 shard the slab is padded into. 6.0 puts that case at 9.2 GiB
-# planned with the ESTIMATE_MARGIN on top. Re-check against the "Peak memory"
-# log line whenever a new data shape or dtype goes through.
+# Peak worker memory during conversion. Two terms, because measurement says one
+# is not enough:
+#
+#   slab = full xy extent x 32 slices x bytes per pixel
+#   mem  = max(WORKER_BASE + SLAB_FACTOR * slab,  MEMORY_OVERHEAD_FACTOR * slab)
+#
+# The proportional part is the buffer work — decoded slices, the assembled
+# array, the transposed copy for the zarr axis order. The fixed part is a cost
+# each worker carries whatever the image size, and its cause is NOT established.
+# Two plausible explanations were tested and both failed:
+#
+#   * padding to the 4096x4096x32 shard grid — no: the write buffer is clamped
+#     to the real slice size (buffered_slice_writer.py takes min(shard, width)),
+#     and zarr3 sharding omits chunks outside the array domain entirely.
+#   * tensorstore's unbounded chunk cache — no: converting 96 slices of 1024^2
+#     peaked at 4.65 GiB with the default cache and 5.2-5.4 GiB with the pool
+#     capped at 256 MB and 64 MB. Capping it changes nothing.
+#
+# So the term is empirical. It is included because leaving it out underestimated
+# a real run by 2.5x, not because we know what it is.
+#
+# Measured, both on webknossos 4.0:
+#   3584^2 float32, slab 1.53 GiB -> 9.8 GiB per worker
+#   1994^2 float32, slab 0.47 GiB -> 7.2 GiB per worker
+#
+# Those two solve to 6.0 GiB fixed + 2.46 x slab, which is a two-parameter fit
+# to two points — enough to trust where it raises the estimate, not enough to
+# trust where it lowers one. Hence the max(): the old pure-multiple formula
+# still wins for large slabs, so big stitches keep their existing (conservative)
+# sizing until a run measures one. Re-check both against the "Peak memory" line.
+WORKER_BASE = 6 * 2**30
+SLAB_FACTOR = 2.5
 MEMORY_OVERHEAD_FACTOR = 6.0
 
 # Downsampling, as a multiple of the conversion peak measured in the same run.
@@ -264,8 +289,11 @@ def plan_workers(
     if hard_limit is None:
         hard_limit = total_ram
     tasks = max(1, math.ceil(stack.n_slices / BATCH_Z))
+    slab = stack.slice_bytes * BATCH_Z
     mem_per_worker = max(
-        1, int(stack.slice_bytes * BATCH_Z * MEMORY_OVERHEAD_FACTOR)
+        1,
+        int(WORKER_BASE + slab * SLAB_FACTOR),
+        int(slab * MEMORY_OVERHEAD_FACTOR),
     )
     usable_ram = int(total_ram * RAM_SAFETY_FRACTION)
 
@@ -304,10 +332,10 @@ def plan_workers(
         warning = (
             f"Tight memory fit: {_fmt_bytes(peak_ram)} planned against a "
             f"{_fmt_bytes(hard_limit)} limit. Per-worker memory is an estimate "
-            f"({MEMORY_OVERHEAD_FACTOR}x the raw slab), not a measurement — if the "
-            f"real figure is more than {ESTIMATE_MARGIN:.0%} higher this run will be "
-            f"OOM-killed. For a first run at this size use --max-memory {suggested}G, "
-            f"then relax it once you have seen the actual usage."
+            f"({_fmt_bytes(WORKER_BASE)} fixed plus a multiple of the slab), not a "
+            f"measurement — if the real figure is more than {ESTIMATE_MARGIN:.0%} "
+            f"higher this run will be OOM-killed. For a first run at this size use "
+            f"--max-memory {suggested}G, then relax it once you have seen the actual usage."
         )
 
     # Hand the cores that memory left unused to each worker as threads, within

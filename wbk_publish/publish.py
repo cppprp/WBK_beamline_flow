@@ -40,6 +40,7 @@ from .ngff import capture_layer_metadata, write_group_metadata
 from .resources import WorkerPlan, plan_for_stack
 from .remote import (
     attach_metadata,
+    find_dataset_id_by_directory,
     find_dataset_id_by_name,
     get_or_create_folder,
     is_virtual,
@@ -221,6 +222,11 @@ def _resolve_dataset_id(request: PublishRequest, log: logging.Logger) -> str | N
 
     log.info("No recorded dataset id — checking whether one exists by name")
     with webknossos_context(token=request.token, url=WK_URL):
+        # The directory name carries the date and is unique; the display name
+        # does not and is not. Ask the unambiguous question first.
+        by_directory = find_dataset_id_by_directory(request.dataset_name, log)
+        if by_directory:
+            return by_directory
         return find_dataset_id_by_name(
             [request.dataset_name, request.readable_name], log
         )

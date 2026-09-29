@@ -151,7 +151,8 @@ machine's allocation:
 
 ```
 tasks        = ceil(n_slices / 32)          # z-split; slice size adds no parallelism
-mem/worker   = xy_pixels * 32 * bytes_px * 6.0   # measured, see below
+slab         = xy_pixels * 32 * bytes_px
+mem/worker   = max(6 GiB + 2.5 * slab, 6.0 * slab)   # measured, see below
 usable_ram   = total * 0.75                 # the rest is page cache, not spare
 workers      = min(cores, tasks, usable_ram // mem_per_worker, --cpus, 16)
 waves        = ceil(tasks / workers)        # then spread the tasks evenly:
@@ -189,13 +190,32 @@ hygiene rather than a fix — a worker given 5 cores should not size its pools f
 
 ### When it warns
 
-Per-worker memory is a multiplier on the raw slab. The 6.0 was calibrated on the
-cluster from the `Peak memory` log line: a 3584² float32 stack (1.5 GiB slab) peaked
-at 9.4 GiB per worker during conversion. Every run prints that line for its own
-phase, so the figure can be re-checked whenever a new shape or dtype goes through.
+Per-worker memory has two parts, because one number does not fit both ends. The
+proportional part is the buffer work — decoded slices, the assembled array, the
+transposed copy for the zarr axis order. The fixed part is a cost each worker carries whatever the image size — and its
+cause is not established. Two plausible explanations were tested and both
+failed: padding to the 4096 x 4096 x 32 shard grid (the write buffer is clamped
+to the real slice size, and zarr3 omits chunks outside the array), and
+tensorstore's unbounded chunk cache (capping it at 256 MB or 64 MB changed peak
+memory by nothing). The term is in the model because leaving it out
+underestimated a real run by 2.5x, not because we know what it is.
+
+Both terms are calibrated from the `Peak memory` log line, which every run prints
+for each phase:
+
+| stack | slab | measured |
+|---|---|---|
+| 3584² float32 | 1.53 GiB | 9.8 GiB/worker |
+| 1994² float32 | 0.47 GiB | 7.2 GiB/worker |
+
+Those solve to 6 GiB fixed plus 2.5x the slab — two parameters from two points,
+which is enough to trust where it raises the estimate and not enough where it
+lowers one. So the old pure-multiple formula is kept as a floor: large slabs keep
+their existing, more conservative sizing until a run actually measures one.
 Downsampling is sized separately, from the peak the conversion phase just measured
-(`DOWNSAMPLE_PEAK_RATIO`, observed 2.2x, planned 2.5x). On most datasets there is
-ample slack. The run warns when the plan would not survive the figure being 10%
+(`DOWNSAMPLE_PEAK_RATIO`, observed 0.90–0.98, planned 1.1).
+
+The run warns when the plan would not survive the figure being 10%
 higher than planned — which a plan filling its 90% budget does not trip, but one
 pushed past that by `--cpus` or a lowered `--max-memory` can.
 
@@ -346,12 +366,19 @@ for.
 2. The `dataset_id` recorded for this directory in `meta_<run>.json` (or, for
    datasets published before the record moved there, in the old
    `dataset-metadata.json` sidecar beside the input data — read, never written).
-3. A lookup by name, for datasets published before ids were recorded.
-4. Otherwise: fresh upload.
+3. The dataset whose **directory name** is this run's full, date-qualified name
+   (`20260827_p3l-eduke_pin_180_1`). Unique by construction.
+4. A search by **display name**, for datasets an older tool renamed.
+5. Otherwise: fresh upload.
 
-If step 3 finds several candidates, or cannot reach the server, the run stops
-rather than guessing — a wrong guess either overwrites the wrong dataset or
-publishes a duplicate. Pass `--dataset-id` to resolve it.
+Step 4 is the weak one and is deliberately last. WEBKNOSSOS keeps a directory
+name and a display name, and this pipeline renames datasets to the readable form
+(`pin_180_1`), which drops the date — so a sample imaged twice has two datasets
+with the same display name. When that search finds several, or cannot reach the
+server, the run stops rather than guessing: a wrong guess either overwrites the
+wrong dataset or publishes a duplicate. Open the candidates it lists, pick the one
+whose directory name carries this run's date, and pass `--dataset-id`. The id is
+recorded in the metadata file afterwards, so it only happens once per dataset.
 
 ## The metadata file
 

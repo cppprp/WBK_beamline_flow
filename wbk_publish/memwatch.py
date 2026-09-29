@@ -176,13 +176,23 @@ class MemoryWatch:
         if final and ratio > 1.15:
             # Past the margin in resources.ESTIMATE_MARGIN, the sizing would have
             # overcommitted the node on a bigger stack.
-            knob = (
-                "DOWNSAMPLE_PEAK_RATIO" if self.phase == "downsampling"
-                else "MEMORY_OVERHEAD_FACTOR"
-            )
+            if self.phase == "downsampling":
+                advice = ("Raise DOWNSAMPLE_PEAK_RATIO in resources.py by about "
+                          "this ratio.")
+            else:
+                # Not a single knob: the estimate is a fixed term plus a multiple
+                # of the slab, and which one is wrong depends on the stack. A
+                # small stack that overshoots means WORKER_BASE is too low; a
+                # large one means SLAB_FACTOR is.
+                advice = (
+                    f"The estimate is {_fmt_bytes(self.plan.mem_per_worker)}/worker = "
+                    "WORKER_BASE + SLAB_FACTOR x slab (resources.py). On a small "
+                    "stack an overshoot means WORKER_BASE is too low; on a large one, "
+                    "SLAB_FACTOR. Record this run's slab and peak before changing "
+                    "either — one number cannot fit both ends."
+                )
             self.log.warning(
                 f"Workers used {ratio:.2f}x the memory the {self.phase} phase was "
-                f"sized on. On a larger stack this would exceed the node. Raise "
-                f"{knob} in resources.py by about this ratio, or pass --max-memory "
-                "to leave headroom until it is corrected."
+                f"sized on. On a larger stack this could exceed the node. {advice} "
+                "Pass --max-memory to leave headroom until it is corrected."
             )

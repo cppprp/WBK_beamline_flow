@@ -63,12 +63,49 @@ def resolve_teams(user_team_name: str, log: logging.Logger) -> list[Team]:
     return teams
 
 
+def find_dataset_id_by_directory(directory_name: str, log: logging.Logger) -> str | None:
+    """Resolve the date-qualified directory name, which is unique per dataset.
+
+    WEBKNOSSOS keeps two names: the `directory_name` a dataset was uploaded
+    under (`20260827_p3l-eduke_pin_180_1`) and the display `name` shown in the
+    UI, which this pipeline sets to the readable form (`pin_180_1`). Only the
+    first carries the date, so only the first distinguishes this reconstruction
+    from the same sample re-imaged on another day — and a display-name search
+    cannot see it at all.
+
+    Tried before the display-name search for exactly that reason. Returns None
+    if nothing has that directory name, which is the common case for a dataset
+    that was renamed by an older tool.
+    """
+    from webknossos import User
+    from webknossos.client.context import _get_api_client
+
+    try:
+        client = _get_api_client()
+        dataset_id = client.dataset_id_from_name(
+            directory_name=directory_name,
+            organization_id=User.get_current_user().organization_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - absent is the normal outcome
+        log.debug(f"No dataset with directory name '{directory_name}': {exc}")
+        return None
+
+    if dataset_id:
+        log.info(f"Matched existing dataset by directory name '{directory_name}': {dataset_id}")
+    return dataset_id or None
+
+
 def find_dataset_id_by_name(names: list[str], log: logging.Logger) -> str | None:
-    """Look up a dataset id by name — the fallback for datasets with no recorded id.
+    """Look up a dataset id by display name — the last resort before publishing fresh.
 
     Several names are tried because a dataset is uploaded under its full
     `20250921_p3l-eduke_MA040_1` name and then renamed to the readable
     `MA040_1`, so which one is live depends on how far a previous run got.
+
+    Display names are not unique: the readable form drops the date, so a sample
+    re-imaged months later produces a second dataset with the same one. That is
+    why `find_dataset_id_by_directory` is tried first, and why an ambiguous
+    result here stops the run rather than guessing.
 
     Returns None when nothing matches (the caller then publishes fresh) and
     also when the match is ambiguous — guessing would either duplicate a
@@ -103,10 +140,16 @@ def find_dataset_id_by_name(names: list[str], log: logging.Logger) -> str | None
         return None
 
     if len(found) > 1:
-        listed = ", ".join(f"{i} ('{n}')" for i, n in found.items())
+        listed = "\n".join(
+            f"    {WK_URL}/datasets/{i}   (matched '{n}')" for i, n in found.items()
+        )
         raise RuntimeError(
-            f"Found {len(found)} candidate datasets for {names}: {listed}\n"
-            "Refusing to guess which one to overwrite. Re-run with --dataset-id <id>."
+            f"Found {len(found)} datasets sharing a display name with {names}:\n"
+            f"{listed}\n"
+            "The display name drops the acquisition date, so a sample imaged more\n"
+            "than once has several. Open them and pick the one whose directory name\n"
+            "carries this run's date, then re-run with --dataset-id <id>. Its id is\n"
+            "recorded in the metadata file afterwards, so this only happens once."
         )
 
     dataset_id, matched_name = next(iter(found.items()))
