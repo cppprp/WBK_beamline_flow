@@ -96,9 +96,11 @@ class MemoryWatch:
             try:
                 worker_rss.append(child.memory_info().rss)
                 worker_threads.append(child.num_threads())
-                # Running, or blocked? A core stalled on memory still counts as
-                # running, so this separates "the work is slow" from "the worker
-                # is waiting" — which CPU percentage alone cannot.
+                # Running, or blocked? This is the *main* thread's state, which
+                # for a worker doing its I/O through tensorstore's own thread
+                # pool reads "sleeping" while those threads work. Useful for
+                # spotting disk-sleep (uninterruptible I/O waits); not a measure
+                # of whether the worker as a whole is busy — CPU percentage is.
                 state = child.status()
                 self._states[state] = self._states.get(state, 0) + 1
             except psutil.Error:  # gone between listing and reading; fine
@@ -153,7 +155,7 @@ class MemoryWatch:
                 f"{name} {count / total:.0%}"
                 for name, count in sorted(self._states.items(), key=lambda kv: -kv[1])
             )
-            self.log.info(f"Worker state ({self.phase}): {breakdown}")
+            self.log.info(f"Worker state ({self.phase}, main thread): {breakdown}")
 
         threads = (
             f"Threads ({self.phase}): up to {self.peak_threads_worker} per worker, "

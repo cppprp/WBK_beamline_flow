@@ -149,11 +149,22 @@ machine's allocation:
 tasks        = ceil(n_slices / 32)          # z-split; slice size adds no parallelism
 mem/worker   = xy_pixels * 32 * bytes_px * 6.0   # measured, see below
 usable_ram   = total * 0.75                 # the rest is page cache, not spare
-workers      = min(cores, tasks, usable_ram // mem_per_worker, --cpus)
+workers      = min(cores, tasks, usable_ram // mem_per_worker, --cpus, 16)
 waves        = ceil(tasks / workers)        # then spread the tasks evenly:
 workers      = ceil(tasks / waves)
 threads/worker = min(cores // workers, 16)
 ```
+
+The 16 is a ceiling set by the *storage*, not the data. Conversion writes faster
+than morningstar accepts, so beyond the point that saturates it more workers only
+queue — and then cost throughput. Measured on a 2038 x 3584² float32 stack: 8
+workers 3:17 (392 MB/s, 66 GiB), 16 workers 3:04 (420 MB/s, 135 GiB), 32 workers
+3:43 (347 MB/s, 266 GiB). `WK_MAX_CONVERSION_WORKERS` raises it when the storage
+improves; `--cpus` / `--jobs` applies on top and can only lower it.
+
+Downsampling is sized separately and is *not* bounded by this — that phase is
+job-count-limited rather than write-bound, and wants more workers, not fewer (mag
+1→2 takes 1:24 with 32 workers against 2:07 with 8).
 
 The last two lines matter more than they look. Tasks run in waves, and once the
 wave count is fixed, extra workers only make the final wave emptier: 64 tasks take
@@ -205,6 +216,30 @@ allocation.
 
 A thread limit you set yourself in the environment is always respected; the run only
 manages variables it set itself.
+
+### Stitched volumes
+
+Conversion splits along z only, so **every worker holds the full xy plane** of the
+stitched volume for 32 slices. Per-worker memory therefore grows with the square of
+the tile count while the node's RAM does not, and the worker count collapses with
+it. Below about six workers the pipeline can no longer saturate the storage (one
+worker manages ~72 MB/s of output), and past that point wall time grows much faster
+than the data does.
+
+In uint16 this is comfortable at the sizes P14 produces. The largest stitch to date,
+10507 x 10512 x 10339 (2.28 TB raw), plans 9 workers x 39.5 GiB — 355 GiB of the
+377 usable, no warning — and takes roughly two hours, well inside the wrapper's
+8-hour default. In float32 the same volume would not fit a single worker below
+about 22,800², and a 5x5 tile grid already drops to three workers and takes five
+times as long as its uint16 equivalent. Publish stitches as uint16 where the
+dynamic range allows; it is worth more than any tuning in this repo.
+
+Check disk before a large run: staging needs the full converted size (~1.9 TB for
+the above), and on an overwrite the old copy survives until the new one is ready,
+so the transient peak is about double that.
+
+`--dry-run` prints the real plan — workers, per-worker memory, warnings — for any
+stack without converting anything. Use it before committing hours to a new size.
 
 ### The pyramid
 

@@ -68,6 +68,22 @@ RAM_SAFETY_FRACTION = 0.75
 # budget: when memory is the binding constraint the plan always fills its budget.
 ESTIMATE_MARGIN = 0.10
 
+# Conversion writes faster than the staging filesystem accepts, so past a point
+# more workers only queue for a full pipe — and then start costing throughput.
+# Measured on morningstar (389 MB/s for 8 concurrent incompressible streams),
+# converting a 2038 x 3584^2 float32 stack:
+#
+#     8 workers   3:17   392 MB/s    66 GiB
+#    16 workers   3:04   420 MB/s   135 GiB   <- at the ceiling
+#    32 workers   3:43   347 MB/s   266 GiB   <- past it, and slower
+#
+# 16 is the default: the fastest measured, and it leaves three quarters of the
+# node free for other work. This tracks the *storage*, not the data — a bigger
+# stack does not want more workers, it wants the same ones for longer. Raise it
+# when the storage gets faster (WK_MAX_CONVERSION_WORKERS), or per run with
+# --cpus / --jobs, which is applied on top of this and can only lower it.
+MAX_CONVERSION_WORKERS = int(os.environ.get("WK_MAX_CONVERSION_WORKERS", "16"))
+
 # Spare cores are handed to each worker as threads, but only up to a point: BLAS
 # and zstd stop scaling long before a whole node's worth of threads, and past that
 # the extra threads just contend. A job with few tasks leaves the node partly idle
@@ -363,6 +379,11 @@ def plan_for_stack(
     cores = available_cores()
     total_ram = available_memory(max_memory)
 
+    # Deployment policy, applied on top of whatever the operator asked for: the
+    # sizing arithmetic below knows about cores, memory and task count, but not
+    # about how fast the staging filesystem accepts bytes.
+    capped = min(max_workers or MAX_CONVERSION_WORKERS, MAX_CONVERSION_WORKERS)
+
     # The budget may be lowered by --max-memory; the hard limit is what the
     # machine enforces regardless, and is what the safety check measures against.
     plan = plan_workers(
@@ -370,7 +391,7 @@ def plan_for_stack(
         cores=cores,
         total_ram=total_ram,
         hard_limit=available_memory(),
-        max_workers=max_workers,
+        max_workers=capped,
     )
 
     log.info(
@@ -381,6 +402,12 @@ def plan_for_stack(
         f"Machine: {cores} cores, {_fmt_bytes(total_ram)} RAM "
         f"({_fmt_bytes(plan.usable_ram)} usable)"
     )
+    if plan.workers == capped == MAX_CONVERSION_WORKERS:
+        log.info(
+            f"Conversion capped at {MAX_CONVERSION_WORKERS} workers — more than the "
+            "staging filesystem can absorb. Raise WK_MAX_CONVERSION_WORKERS if it "
+            "has been made faster."
+        )
     log.info(f"Plan: {plan.describe()}")
     if plan.warning:
         log.warning(plan.warning)

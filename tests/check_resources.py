@@ -161,6 +161,37 @@ if acted.workers >= over.workers:
 else:
     print(f"  ok   workers drop {over.workers} -> {acted.workers} with the lower budget")
 
+print("— the conversion cap is deployment policy, on top of --cpus")
+import wbk_publish.resources as res
+from wbk_publish.logs import make_logger
+
+log = make_logger("res-check", verbose=False)
+saved_probe, saved_env = res.probe_stack, {
+    k: os.environ.get(k) for k in ("SLURM_CPUS_ON_NODE", "SLURM_CPUS_PER_TASK", "SLURM_MEM_PER_NODE")
+}
+# A stack with far more tasks than the cap, on a machine with room to spare, so
+# nothing but the cap can be the binding constraint.
+res.probe_stack = lambda _files: stack(8000, 2048)
+try:
+    os.environ.pop("SLURM_CPUS_PER_TASK", None)
+    os.environ["SLURM_CPUS_ON_NODE"] = str(NODE_CORES)
+    os.environ["SLURM_MEM_PER_NODE"] = str(512 * 1024)
+
+    eq("default is the cap", res.plan_for_stack(["x"], log).workers, res.MAX_CONVERSION_WORKERS)
+    eq("--cpus can lower it", res.plan_for_stack(["x"], log, max_workers=4).workers, 4)
+    eq("--cpus cannot raise it",
+       res.plan_for_stack(["x"], log, max_workers=64).workers, res.MAX_CONVERSION_WORKERS)
+
+    # The cap is a ceiling, not a target: memory and task count still bind first.
+    res.probe_stack = lambda _files: stack(200, 8192)   # 7 tasks, 24 GiB/worker
+    small = res.plan_for_stack(["x"], log)
+    eq("a short stack is still limited by its task count", small.limited_by, "tasks")
+    eq("...and stays below the cap", small.workers < res.MAX_CONVERSION_WORKERS, True)
+finally:
+    res.probe_stack = saved_probe
+    for k, v in saved_env.items():
+        os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
 print("— memory size parsing")
 eq("400G", parse_memory_size("400G"), 400 * GiB)
 eq("512GB", parse_memory_size("512GB"), 512 * GiB)
