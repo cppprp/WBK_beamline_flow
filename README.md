@@ -49,10 +49,14 @@ allocation, runs the conversion from the project's own venv. One command:
 **The node must reach morningstar at `/morningstar`** — mounted there, or via a
 symlink to wherever it is mounted. The WEBKNOSSOS server hands the client
 `/morningstar/...` paths to write into and the client library has no way to remap
-them, so a mount at any other path cannot work. The wrapper checks this, and
-`/mnt/beegfs7`, before starting Python; the pipeline also refuses to create its
-staging directory if missing — on a node without the mount, `mkdir -p` would
-otherwise create a local `/morningstar/tmp` and stage a conversion into it.
+them, so a mount at any other path cannot work. The wrapper checks it before
+starting Python, and the pipeline refuses to create its staging directory if
+missing — on a node without the mount, `mkdir -p` would otherwise create a local
+`/morningstar/tmp` and stage a conversion into it.
+
+Input filesystems are not checked against a fixed list: stacks come from beegfs,
+`/mnt/ximg` and the big JBODs, so the pipeline resolves whichever filesystem the
+given path is on and names it if the directory is missing.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -402,7 +406,6 @@ Defaults live in `config.py` and can be overridden per environment:
 | `WK_URL` | `https://webknossos.embl-hamburg.de` | Server |
 | `WK_TOKEN` | — | API token; else `.config/auth_token.txt` |
 | `WK_TEMP_BASE` | `/morningstar/tmp` | Conversion staging |
-| `WK_BEEGFS_MOUNT` | `/mnt/beegfs7` | Checked before work starts |
 | `WK_XIMG_TEAM` | `ximg` | Facility-wide team |
 
 **`WK_TEMP_BASE` must be on the same filesystem as the WEBKNOSSOS storage.**

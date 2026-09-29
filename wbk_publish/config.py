@@ -24,7 +24,9 @@ TEMP_BASE = Path(os.environ.get("WK_TEMP_BASE", "/morningstar/tmp"))
 
 # Beamline data mount. Checked before any conversion work starts so a missing
 # mount fails in seconds rather than halfway through a stack.
-BEEGFS_MOUNT = Path(os.environ.get("WK_BEEGFS_MOUNT", "/mnt/beegfs7"))
+# No input-filesystem setting on purpose: stacks come from beegfs, ximg and the
+# big JBODs, so convert.check_input_available resolves whichever filesystem the
+# given path is on rather than requiring a named one.
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 

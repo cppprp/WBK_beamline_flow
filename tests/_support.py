@@ -20,8 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 WORK = Path(os.environ.get("WBK_TEST_WORK", REPO_ROOT / "tests" / ".work"))
 (WORK / "tmp").mkdir(parents=True, exist_ok=True)
 
-# "/" is always a mount point, so the beegfs guard passes without a real mount.
-os.environ.setdefault("WK_BEEGFS_MOUNT", "/")
+# The input check resolves the stack path's own filesystem; no setting needed.
 os.environ.setdefault("WK_TEMP_BASE", str(WORK / "tmp"))
 
 SAMPLE = WORK / "conv"

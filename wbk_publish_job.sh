@@ -114,7 +114,12 @@ WBK_HOME="${WBK_HOME:-$(cd "$(dirname "$0")" && pwd -P)}"   # WBK_LOCAL path
 # /morningstar would otherwise let the pipeline create a local /morningstar/tmp
 # on the node and stage a conversion into it. readlink -f so that a symlink to
 # the real mount point passes too.
-for path in /morningstar /mnt/beegfs7; do
+# Only /morningstar is checked here, and only because its failure is dangerous:
+# without the mount, the pipeline's staging directory would be created on the
+# node's own disk and a conversion staged into it. Input filesystems vary
+# (beegfs, ximg, the big JBODs) and are checked in Python against the path
+# actually given, which produces a better message than a hardcoded list could.
+for path in /morningstar; do
     [[ -e "$path" ]] && mountpoint -q "$(readlink -f "$path")" \
         || fail "$path is not reachable on $(hostname). It must be mounted there, or be a symlink to where it is mounted."
 done

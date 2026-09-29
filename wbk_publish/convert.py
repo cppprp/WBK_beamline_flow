@@ -9,6 +9,7 @@ How the work is parallelised is decided in `resources.py`, not here.
 """
 
 import logging
+import os
 from pathlib import Path
 
 from webknossos import (
@@ -20,7 +21,6 @@ from webknossos import (
     UnsupportedImageFormatError,
 )
 
-from .config import BEEGFS_MOUNT
 from .memwatch import MemoryWatch
 from .resources import WorkerPlan, downsample_workers
 from .threads import apply_thread_limit
@@ -34,24 +34,58 @@ class ConversionFailed(RuntimeError):
     """The images could not be converted. Nothing has been published."""
 
 
+def mount_point(path: Path) -> Path:
+    """The filesystem `path` lives on: its nearest existing ancestor that is a mount."""
+    current = path.absolute()
+    while not current.is_mount() and current != current.parent:
+        current = current.parent
+    return current
+
+
 def check_input_available(tiff_stack: Path, log: logging.Logger) -> None:
-    """Fail fast, before any conversion work, if the input is not reachable."""
-    if not BEEGFS_MOUNT.is_mount():
-        raise RuntimeError(
-            f"beegfs is not mounted at {BEEGFS_MOUNT}. Cannot access input data. Aborting."
-        )
+    """Fail fast, before any conversion work, if the input is not reachable.
+
+    The interesting failure is a network filesystem that is not mounted on this
+    node: the path then either does not exist, or exists as an empty stub under
+    a mount point that never got mounted. Both are caught here — the first by
+    the directory check, the second by collect_tiffs finding nothing — and the
+    message names the filesystem so it is obvious which mount is missing.
+
+    Deliberately not tied to one filesystem. Inputs arrive from beegfs, ximg and
+    the big JBODs, and an earlier version checked that beegfs specifically was
+    mounted, which refused perfectly good runs whose data lived elsewhere.
+    """
     if not tiff_stack.is_dir():
-        raise FileNotFoundError(f"Image stack directory not found: {tiff_stack}")
-    log.debug(f"beegfs mounted, stack directory readable: {tiff_stack}")
+        mount = mount_point(tiff_stack)
+        raise FileNotFoundError(
+            f"Image stack directory not found: {tiff_stack}\n"
+            f"  The nearest mounted filesystem on {os.uname().nodename} is {mount}.\n"
+            "  If the data is on a network filesystem, check that it is mounted here —\n"
+            "  an unmounted path looks exactly like a missing directory."
+        )
+    log.debug(f"Input readable on {mount_point(tiff_stack)}: {tiff_stack}")
 
 
 def collect_tiffs(tiff_stack: Path) -> list[Path]:
-    """Return the slices in Z order."""
+    """Return the slices in Z order.
+
+    An empty directory is the one input failure the existence check above
+    cannot distinguish from a storage problem: a network filesystem that
+    mounted but has nothing under it looks exactly like a stack that was never
+    written. Say both, rather than only the one that is less likely.
+    """
     tiffs = sorted(
         list(tiff_stack.glob("*.tif")) + list(tiff_stack.glob("*.tiff"))
     )
     if not tiffs:
-        raise FileNotFoundError(f"No TIFF files found in {tiff_stack}")
+        entries = sum(1 for _ in tiff_stack.iterdir())
+        raise FileNotFoundError(
+            f"No TIFF files found in {tiff_stack}\n"
+            f"  The directory exists on {mount_point(tiff_stack)} and holds "
+            f"{entries} other entries.\n"
+            "  Either the reconstruction has not written its slices yet, or that\n"
+            "  filesystem is mounted but empty on this host."
+        )
     return tiffs
 
 
