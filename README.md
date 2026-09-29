@@ -80,24 +80,64 @@ before spending an allocation.
 
 ## The storage path
 
-Everything the node writes to morningstar goes through NFS over InfiniBand. Two
-server-side settings decide how fast that is, and both were wrong once:
+The conversion is **write-bound on morningstar**, and the pipeline already
+saturates it. Measured on bcrunch-n08 against `10.40.14.81:/morningstar`:
+
+| | |
+|---|---|
+| 8 concurrent streams, 32 GB incompressible | **389 MB/s** |
+| conversion writing mag 1 (72 GiB) | **392 MB/s** |
+
+There is nothing left to win on the client side. What was found getting here,
+so none of it has to be rediscovered:
 
 - **The export must be `async`.** With `sync`, every NFS write is committed to
   disk before it is acknowledged, and on ZFS without a separate log device that
-  means ~30–50 MB/s per stream, ~280 MB/s across the server's 8 threads —
-  regardless of how the client writes (measured: conversion, plain `cp`, `dd`
-  all hit the same ceiling; `fio` went from 29.7 to 610 MiB/s when IT switched
-  the export for 10.40.15.108 to `async`). The trade is that a morningstar crash
-  can lose the last few seconds of NFS writes; for this pipeline that is a
-  conversion to re-run, and the old local-disk system carried the same exposure.
-- **nfsd threads**: the distribution default is 8. Less critical with `async`,
-  but 49 parallel writers through 8 server threads still queue; `threads=64`
-  under `[nfsd]` in `/etc/nfs.conf` is the usual setting for a 192-core server.
+  is ~30–50 MB/s per stream. Fixing it took the reference conversion from 6:01
+  to 3:44 (IT changed the export for 10.40.15.108 in Sept 2026). The trade is
+  that a crash can lose the last few seconds of NFS writes; for this pipeline
+  that is a conversion to re-run.
+- **Never benchmark this storage with `dd if=/dev/zero`.** morningstar's ZFS has
+  compression on and stores zero blocks as holes, so it reports 1.4–2.9 GB/s
+  while the real figure is 389 MB/s. That mistake cost a long detour into thread
+  caps and tensorstore settings that turned out to change nothing. Use
+  incompressible data:
+
+  ```
+  dd if=/dev/urandom of=/dev/shm/rand bs=1M count=4096
+  time (for i in $(seq 8); do cat /dev/shm/rand > /morningstar/tmp/r$i & done; wait)
+  ```
+
+- **It is the spindle count, not the configuration.** `/mnt/ximg`
+  (`10.40.15.26:/data001`) converts the same dataset in 1:38 against
+  morningstar's 3:44. Both are ZFS with identical settings (128K recordsize,
+  compression on, atime off) and identical NFS client options, both on SAS
+  7200 rpm 20 TB drives. The difference is 4 x 15-wide RAIDZ2 (52 data disks)
+  against 3 x 9-wide (21). Per data disk the two pools are within 8% of each
+  other — 15.2 vs 16.4 MB/s.
+- **Ruled out:** nfsd thread count (`iostat` shows the drives 85–93% busy, so
+  the server is not the queue), fragmentation (morningstar 0%, ximg 10%), drive
+  interface (both SAS), `atime` (already `off` on both pools).
+- **Untested, the one remaining lever:** `recordsize`. Both pools are on the
+  128K default, and both get only ~15 MB/s per drive from hardware that streams
+  ~285 — the `iostat` signature is seek-bound (50–100 KB requests, 20–50 ms
+  latency). On a 9-wide RAIDZ2 a 128K record is ~18 KB per disk; `recordsize=1M`
+  would make it ~150 KB. It applies to newly written data only and reverts with
+  one command, but it cuts the other way for reads: WEBKNOSSOS serves 50–100 KB
+  byte ranges out of the shard files, and a larger record means fetching more
+  per bucket. On spinning disks that costs ~35% latency rather than the naive
+  8x, because seek dominates transfer — but it is a maintenance-window
+  experiment, to be measured on both sides, not a free win.
+
+  Note that staging and published data cannot have different record sizes:
+  `MOVE_AND_SYMLINK` hands over with a `rename()`, which requires one ZFS
+  filesystem.
 
 `bench_convert.sh` times the plain `webknossos convert` CLI against a chosen target
-and library version, with network and NFS counters — it is how the above was found,
-and the thing to reach for if conversions get slow again.
+and library version, with network and NFS counters. `bench_phases.py` splits one
+worker's decode / convert / write apart, with a local target for comparison. Those
+two are how the above was found, and the thing to reach for if conversions get slow
+again.
 
 ## How parallelism is chosen
 

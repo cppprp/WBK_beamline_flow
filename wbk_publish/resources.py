@@ -47,7 +47,7 @@ MEMORY_OVERHEAD_FACTOR = 6.0
 # shard, so mag 2 of that stack is 32 jobs and anything under 32 workers runs
 # it in multiple waves. The earlier 2.5 was measured against the 1024^3 shards
 # 4.x used before, where one job assembled a 4 GiB buffer.
-DOWNSAMPLE_PEAK_RATIO = 1.2
+DOWNSAMPLE_PEAK_RATIO = 1.1
 
 # The share of RAM the workers may hold. The rest is not spare — it is the page
 # cache the TIFF reads come through and the dirty pages the writes go out
@@ -315,23 +315,38 @@ def downsample_workers(
 ) -> tuple[int, int]:
     """Size the downsample pool from what conversion actually used.
 
-    `measured_peak` is the largest worker seen during conversion. The larger
-    of that and the plan's estimate is the baseline — a measurement below the
-    estimate is not a reason to be less careful — and the downsample figure is
-    that times DOWNSAMPLE_PEAK_RATIO. Never more workers than conversion had:
-    the thread limit was set for that count.
+    Deliberately not bounded by the conversion worker count. The two phases
+    want opposite things and are measured to disagree: conversion is slower
+    with more workers (3:43 at 32 against 3:17 at 8 on the reference stack,
+    because the per-task memory shuffling contends), while downsampling is
+    faster (1:27 against 2:07, because it is job-count-limited and barely
+    touches memory). Tying them together gives up one or the other.
+
+    `measured_peak` is the largest worker seen during conversion; the larger
+    of that and the plan's estimate is the baseline, since a measurement below
+    the estimate is not a reason to be less careful.
 
     Returns (workers, assumed bytes per worker).
     """
     baseline = max(measured_peak, plan.mem_per_worker)
     per_worker = int(baseline * DOWNSAMPLE_PEAK_RATIO)
-    workers = max(1, min(plan.workers, plan.usable_ram // per_worker))
+
+    # One downsample job is one target shard. Mag 2 halves z, so its job count
+    # is about half the conversion task count — the coarser levels have fewer
+    # still, and sizing for the first (much the largest) level is what matters.
+    # A big stitch also splits in xy, which only adds jobs; ignoring that keeps
+    # the estimate on the conservative side.
+    jobs = max(1, math.ceil(plan.tasks / 2))
+
+    workers = max(1, min(plan.cores, plan.usable_ram // per_worker, jobs))
+    waves = math.ceil(jobs / workers)
+    workers = max(1, math.ceil(jobs / waves))
 
     log.info(
         f"Downsampling with {workers} workers "
         f"({_fmt_bytes(per_worker)}/worker assumed: conversion peaked at "
         f"{_fmt_bytes(baseline)}, and downsampling has been seen at "
-        f"{DOWNSAMPLE_PEAK_RATIO}x that)"
+        f"{DOWNSAMPLE_PEAK_RATIO}x that; ~{jobs} jobs in the first level)"
     )
     return workers, per_worker
 

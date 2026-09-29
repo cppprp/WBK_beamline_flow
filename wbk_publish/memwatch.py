@@ -59,6 +59,7 @@ class MemoryWatch:
         self.peak_threads_total = 0
         self.workers_seen = 0
         self._cpu_samples: list[float] = []
+        self._states: dict[str, int] = {}
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="memwatch", daemon=True)
 
@@ -95,6 +96,11 @@ class MemoryWatch:
             try:
                 worker_rss.append(child.memory_info().rss)
                 worker_threads.append(child.num_threads())
+                # Running, or blocked? A core stalled on memory still counts as
+                # running, so this separates "the work is slow" from "the worker
+                # is waiting" — which CPU percentage alone cannot.
+                state = child.status()
+                self._states[state] = self._states.get(state, 0) + 1
             except psutil.Error:  # gone between listing and reading; fine
                 continue
 
@@ -140,6 +146,14 @@ class MemoryWatch:
             f"{label}: largest worker {_fmt_bytes(self.peak_worker)}, "
             f"total {_fmt_bytes(self.peak_total)} across up to {self.workers_seen} workers"
         )
+
+        if self._states:
+            total = sum(self._states.values())
+            breakdown = ", ".join(
+                f"{name} {count / total:.0%}"
+                for name, count in sorted(self._states.items(), key=lambda kv: -kv[1])
+            )
+            self.log.info(f"Worker state ({self.phase}): {breakdown}")
 
         threads = (
             f"Threads ({self.phase}): up to {self.peak_threads_worker} per worker, "
