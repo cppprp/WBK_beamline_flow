@@ -114,7 +114,34 @@ record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-
 data = json.loads(meta.read_text())
 eq("id read back", read_dataset_id(meta, recon, log), "abc123")
 eq("keyed by the input directory name", list(data["webknossos"]), ["recon_111_1"])
-eq("records the layer", data["webknossos"]["recon_111_1"]["layer"], "xray")
+eq("records the layer", list(data["webknossos"]["recon_111_1"]["layers"]), ["xray"])
+
+# A dataset can carry more than one layer, published by separate commands.
+record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
+                   layer_name="predictions", log=log)
+layers = json.loads(meta.read_text())["webknossos"]["recon_111_1"]["layers"]
+eq("second layer added beside the first", sorted(layers), ["predictions", "xray"])
+# Not that the two times differ — a batch can publish both within one second,
+# and the stamps have second resolution. That each layer carries its own is the
+# property; the migration check below proves an earlier one is not overwritten.
+eq("each layer carries a time", all(layers.values()), True)
+
+# Records written before layers were a mapping must survive being read and
+# rewritten, or a re-publish would lose when the first layer went out.
+old = json.loads(meta.read_text())
+old["webknossos"]["recon_111_1"] = {
+    "dataset_id": "abc123", "dataset_name": "n",
+    "webknossos_url": "https://webknossos.embl-hamburg.de",
+    "layer": "xray", "published_at": "2020-01-01T00:00:00+00:00",
+}
+meta.write_text(json.dumps(old, indent=2))
+eq("id readable from the pre-layers form", read_dataset_id(meta, recon, log), "abc123")
+record_publication(meta, recon, dataset_id="abc123", dataset_name="n",
+                   layer_name="predictions", log=log)
+migrated = json.loads(meta.read_text())["webknossos"]["recon_111_1"]
+eq("migrated to layers", sorted(migrated["layers"]), ["predictions", "xray"])
+eq("original publish time kept", migrated["layers"]["xray"], "2020-01-01T00:00:00+00:00")
+eq("single-layer fields dropped", "layer" in migrated or "published_at" in migrated, False)
 eq("MX-Cube keys untouched", {k: v for k, v in data.items() if k != "webknossos"}, mx_cube)
 eq("MX-Cube key order kept", list(data)[:-1], list(mx_cube))
 eq("non-ascii stays readable", "\\u" in meta.read_text(), False)

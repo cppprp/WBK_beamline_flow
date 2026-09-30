@@ -30,37 +30,40 @@ from webknossos.dataset.defaults import DEFAULT_SHARD_SHAPE_FROM_IMAGES
 
 BATCH_Z = DEFAULT_SHARD_SHAPE_FROM_IMAGES.z
 
-# Peak worker memory during conversion. Two terms, because measurement says one
-# is not enough:
+# Peak worker memory during conversion. Two terms, because one does not fit:
 #
-#   slab = full xy extent x 32 slices x bytes per pixel
-#   mem  = max(WORKER_BASE + SLAB_FACTOR * slab,  MEMORY_OVERHEAD_FACTOR * slab)
+#   slab  = full xy extent x 32 slices x bytes per pixel   (what this task holds)
+#   shard = 4096 x 4096 x 32 x bytes per pixel             (the storage unit)
+#   mem   = max(SHARD_FACTOR * shard + SLAB_FACTOR * slab,
+#               MEMORY_OVERHEAD_FACTOR * slab)
 #
-# The proportional part is the buffer work — decoded slices, the assembled
-# array, the transposed copy for the zarr axis order. The fixed part is a cost
-# each worker carries whatever the image size, and its cause is NOT established.
-# Two plausible explanations were tested and both failed:
+# The slab term is the buffer work: decoded slices, the assembled array, the
+# transposed copy for the zarr axis order. The shard term is a cost that does
+# not follow the image size — and it is not a constant either, which is what
+# three measurements showed:
 #
-#   * padding to the 4096x4096x32 shard grid — no: the write buffer is clamped
-#     to the real slice size (buffered_slice_writer.py takes min(shard, width)),
-#     and zarr3 sharding omits chunks outside the array domain entirely.
-#   * tensorstore's unbounded chunk cache — no: converting 96 slices of 1024^2
-#     peaked at 4.65 GiB with the default cache and 5.2-5.4 GiB with the pool
-#     capped at 256 MB and 64 MB. Capping it changes nothing.
+#   3584^2 float32   slab 1.53 GiB   ->  9.8 GiB/worker
+#   1994^2 float32   slab 0.47 GiB   ->  7.2 GiB/worker
+#   4774^2 uint16    slab 1.36 GiB   ->  6.0 GiB/worker
 #
-# So the term is empirical. It is included because leaving it out underestimated
-# a real run by 2.5x, not because we know what it is.
+# The first two alone look like a fixed ~6 GiB. The third has a slab between
+# them and used far less, and the difference is the dtype: its shard is half the
+# size. Expressed per shard, all three land on 3.0 x shard + 2.5 x slab, within
+# 7%. What exactly holds three shards' worth is still not established — the
+# write buffer is clamped to the real slice size, and bounding tensorstore's
+# chunk cache changes nothing — but the scaling is clear enough to size against.
 #
-# Measured, both on webknossos 4.0:
-#   3584^2 float32, slab 1.53 GiB -> 9.8 GiB per worker
-#   1994^2 float32, slab 0.47 GiB -> 7.2 GiB per worker
-#
-# Those two solve to 6.0 GiB fixed + 2.46 x slab, which is a two-parameter fit
-# to two points — enough to trust where it raises the estimate, not enough to
-# trust where it lowers one. Hence the max(): the old pure-multiple formula
-# still wins for large slabs, so big stitches keep their existing (conservative)
-# sizing until a run measures one. Re-check both against the "Peak memory" line.
-WORKER_BASE = 6 * 2**30
+# The pure-multiple formula is kept as a floor. The largest slab ever measured
+# is 1.53 GiB and a big stitch is four times that, so the two-term model is
+# extrapolating there; the floor keeps those runs on their old, more
+# conservative sizing, and costs nothing because they are storage-bound long
+# before the worker count matters. Re-check all of it against "Peak memory".
+SHARD_PIXELS = (
+    DEFAULT_SHARD_SHAPE_FROM_IMAGES.x
+    * DEFAULT_SHARD_SHAPE_FROM_IMAGES.y
+    * DEFAULT_SHARD_SHAPE_FROM_IMAGES.z
+)
+SHARD_FACTOR = 3.0
 SLAB_FACTOR = 2.5
 MEMORY_OVERHEAD_FACTOR = 6.0
 
@@ -290,9 +293,10 @@ def plan_workers(
         hard_limit = total_ram
     tasks = max(1, math.ceil(stack.n_slices / BATCH_Z))
     slab = stack.slice_bytes * BATCH_Z
+    shard = SHARD_PIXELS * stack.bytes_per_pixel
     mem_per_worker = max(
         1,
-        int(WORKER_BASE + slab * SLAB_FACTOR),
+        int(shard * SHARD_FACTOR + slab * SLAB_FACTOR),
         int(slab * MEMORY_OVERHEAD_FACTOR),
     )
     usable_ram = int(total_ram * RAM_SAFETY_FRACTION)
@@ -332,7 +336,7 @@ def plan_workers(
         warning = (
             f"Tight memory fit: {_fmt_bytes(peak_ram)} planned against a "
             f"{_fmt_bytes(hard_limit)} limit. Per-worker memory is an estimate "
-            f"({_fmt_bytes(WORKER_BASE)} fixed plus a multiple of the slab), not a "
+            f"({SHARD_FACTOR}x the shard plus {SLAB_FACTOR}x the slab), not a "
             f"measurement — if the real figure is more than {ESTIMATE_MARGIN:.0%} "
             f"higher this run will be OOM-killed. For a first run at this size use "
             f"--max-memory {suggested}G, then relax it once you have seen the actual usage."

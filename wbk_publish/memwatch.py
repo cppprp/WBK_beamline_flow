@@ -186,10 +186,10 @@ class MemoryWatch:
                 # large one means SLAB_FACTOR is.
                 advice = (
                     f"The estimate is {_fmt_bytes(self.plan.mem_per_worker)}/worker = "
-                    "WORKER_BASE + SLAB_FACTOR x slab (resources.py). On a small "
-                    "stack an overshoot means WORKER_BASE is too low; on a large one, "
-                    "SLAB_FACTOR. Record this run's slab and peak before changing "
-                    "either — one number cannot fit both ends."
+                    "SHARD_FACTOR x shard + SLAB_FACTOR x slab (resources.py). On a "
+                    "small stack an overshoot means SHARD_FACTOR is too low; on a "
+                    "large one, SLAB_FACTOR. Record this run's slab, dtype and peak "
+                    "before changing either — one number cannot fit both ends."
                 )
             self.log.warning(
                 f"Workers used {ratio:.2f}x the memory the {self.phase} phase was "

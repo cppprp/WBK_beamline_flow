@@ -5,6 +5,11 @@ Publishes beamline tomography data to WEBKNOSSOS as zarr3 datasets.
 Re-running on the same input **replaces the layer on the dataset published last
 time and keeps the dataset id**, so URLs and existing annotations stay valid.
 This is the difference from the old `wbki_acp.py` flow, used throughout OCT 2025 - OCT 2026
+
+**If you just want to publish something, read [docs/USAGE.md](docs/USAGE.md).**
+It covers every command, flag and situation, and needs nothing from this file.
+What follows here is how the pipeline works and why it is built this way —
+useful if you are changing it or diagnosing it, not if you are using it.
 ## Install
 
 ```bash
@@ -17,24 +22,28 @@ since 4.0 it is what carries `tifffile` and `imagecodecs` (TIFF reading) and
 
 ## Run
 
-Automatic (the SSH trigger after recon/stitching):
+Everything is submitted to the cluster — see [docs/USAGE.md](docs/USAGE.md).
+The two entry points are modules, but they are invoked through the sbatch
+wrapper rather than directly:
 
 ```bash
-uv run python -m wbk_publish.beamline /mnt/beegfs7/P14/2025/p3l-eduke/RECON/20250921/MA040/recon_111_1/ --voxel-size 650
+WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh /mnt/beegfs7/P14/2025/p3l-eduke/RECON/20250921/MA040/recon_111_1/ --voxel-size 650
 ```
 
-Manual or batch:
-
 ```bash
-uv run python -m wbk_publish.manual --input_dir /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1 --voxel_size 325 --project cardiac_study
+WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh --input_dir /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1 --voxel_size 325 --project cardiac_study
 ```
 
 Both take `--dry-run`, which reports what would happen — fresh upload or layer
 overwrite, target folder, teams, metadata file, and how the machine would be used —
-without converting or transferring anything. Run it first on any path you have not
-published before.
+without converting or transferring anything. Dry runs are submitted too, with a
+15-minute limit: the plan they print is derived from the node's cores and memory,
+so it is only correct when produced where the real run will happen.
 
-If the trigger cannot `cd` into the checkout, use `uv run --directory /path/to/WBK_convert ...`.
+Conversions are not run interactively. Sizing reads the SLURM allocation to decide
+how many workers fit, so outside a job it has nothing to read; an interactive
+session also holds the node exclusively until the shell is closed. `WBK_LOCAL=1`
+bypasses the queue for debugging and prints a warning when it does.
 
 ## Queueing on the cluster
 
@@ -192,8 +201,8 @@ hygiene rather than a fix — a worker given 5 cores should not size its pools f
 
 Per-worker memory has two parts, because one number does not fit both ends. The
 proportional part is the buffer work — decoded slices, the assembled array, the
-transposed copy for the zarr axis order. The fixed part is a cost each worker carries whatever the image size — and its
-cause is not established. Two plausible explanations were tested and both
+transposed copy for the zarr axis order. The shard part is a cost that does not follow the image size — and its cause is
+still not established, though it clearly scales with the storage unit. Two plausible explanations were tested and both
 failed: padding to the 4096 x 4096 x 32 shard grid (the write buffer is clamped
 to the real slice size, and zarr3 omits chunks outside the array), and
 tensorstore's unbounded chunk cache (capping it at 256 MB or 64 MB changed peak
@@ -203,15 +212,19 @@ underestimated a real run by 2.5x, not because we know what it is.
 Both terms are calibrated from the `Peak memory` log line, which every run prints
 for each phase:
 
-| stack | slab | measured |
-|---|---|---|
-| 3584² float32 | 1.53 GiB | 9.8 GiB/worker |
-| 1994² float32 | 0.47 GiB | 7.2 GiB/worker |
+| stack | slab | shard | measured |
+|---|---|---|---|
+| 3584² float32 | 1.53 GiB | 2.0 GiB | 9.8 GiB/worker |
+| 1994² float32 | 0.47 GiB | 2.0 GiB | 7.2 GiB/worker |
+| 4774² uint16 | 1.36 GiB | 1.0 GiB | 6.0 GiB/worker |
 
-Those solve to 6 GiB fixed plus 2.5x the slab — two parameters from two points,
-which is enough to trust where it raises the estimate and not enough where it
-lowers one. So the old pure-multiple formula is kept as a floor: large slabs keep
-their existing, more conservative sizing until a run actually measures one.
+The first two alone look like a fixed ~6 GiB. The third has a slab between them
+and used far less — because its dtype halves the shard. All three land on
+**3.0 x shard + 2.5 x slab**, within 7%. The pure-multiple formula is kept as a
+floor, since the largest measured slab is 1.53 GiB and a big stitch is four
+times that; the floor keeps those runs on their old, more conservative sizing
+and costs nothing, because they are storage-bound long before worker count
+matters.
 Downsampling is sized separately, from the peak the conversion phase just measured
 (`DOWNSAMPLE_PEAK_RATIO`, observed 0.90–0.98, planned 1.1).
 
@@ -419,6 +432,11 @@ entry, so they never overwrite each other.
 run (and `--dry-run`) logs that the metadata was updated after the last publish and
 WEBKNOSSOS is behind.
 
+`--metadata-file` (beamline) or `--metadata_file` (manual) points at a different
+file, which is then both read for acquisition metadata and written with the
+publication record. Use it when the metadata lives somewhere other than
+`<sample>/meta_<run>.json`.
+
 If the file is missing (archive data published by hand) it is created with only
 the `webknossos` block. If it exists but is not valid JSON, it is left alone: the
 publish succeeds, the id is printed in the log, and the next run finds the dataset
@@ -444,6 +462,7 @@ an `os.rename()` and cannot cross a mount point.
 | Module | Responsibility |
 |---|---|
 | `beamline.py` / `manual.py` | CLIs; build a `PublishRequest` |
+| `discover.py` | Finds publishable run directories under a folder, for batches |
 | `publish.py` | Pipeline: locking, flow selection, fresh upload, layer overwrite |
 | `convert.py` | TIFF stack → zarr3 layer + mag pyramid, in staging |
 | `remote.py` | Folders, teams, metadata, dataset lookup |

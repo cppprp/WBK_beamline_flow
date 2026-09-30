@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=wbk_publish
 #SBATCH --nodes=1
-#SBATCH --exclusive
 #SBATCH --time=08:00:00
 #
 # Publish a dataset to WEBKNOSSOS as an sbatch job on the cluster.
@@ -27,9 +26,13 @@
 #       --input_dir /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1 \
 #       --voxel_size 325 --project cardiac_study
 #
-# Run in place without queueing — a dry run on the login node, say:
+# Check a path before spending an allocation. A dry run converts nothing, but it
+# still goes through sbatch: the login node has neither the input filesystems nor
+# morningstar, and the plan it prints is only right when produced on the node the
+# real run will use. It is given a 15-minute limit rather than the usual eight
+# hours, so it cannot sit on a node.
 #
-#   WBK_LOCAL=1 ./wbk_publish_job.sh <input_dir> --voxel-size 650 --dry-run
+#   ./wbk_publish_job.sh <input_dir> --voxel-size 650 --dry-run
 #
 # Extra sbatch flags go through SBATCH_ARGS, e.g. a known-long stitch:
 #
@@ -40,6 +43,7 @@
 #   WBK_MODULE  wbk_publish.beamline | .manual     default wbk_publish.beamline
 #   WBK_NODE    a specific node to reserve         default: let SLURM choose
 #   WBK_LOGS    where job logs go                  default $WBK_HOME/logs
+#   WBK_LOCAL   run here instead of queueing      debugging escape hatch; warns
 #   UV          the uv binary                      default /mx-beta/ximg-beta/uv/uv
 #
 # Anything else in the submitting environment (WK_TOKEN, WK_TIMEOUT, ...) reaches
@@ -86,15 +90,39 @@ if [[ -z "${SLURM_JOB_ID:-}" && -z "${WBK_LOCAL:-}" ]]; then
     export WBK_HOME="${WBK_HOME:-$(cd "$(dirname "$0")" && pwd -P)}"
     export WBK_LOGS="${WBK_LOGS:-$WBK_HOME/logs}"
     [[ -d "$WBK_HOME/wbk_publish" ]] || fail "no wbk_publish package under WBK_HOME=$WBK_HOME"
-    [[ -x "$UV" ]] || fail "uv not found at $UV. Set UV=/path/to/uv."
     mkdir -p "$WBK_LOGS"
 
-    echo "syncing environment in $WBK_HOME …"
-    "$UV" sync --frozen --directory "$WBK_HOME" \
-        || fail "uv sync failed; the lockfile and pyproject.toml must agree (run 'uv lock' if you changed dependencies)"
+    # wbk_batch.sh syncs once before submitting a whole list; forty identical
+    # syncs would be forty seconds of nothing. uv is only needed for the sync,
+    # so skipping it removes the dependency here too — the job itself runs
+    # .venv/bin/python directly.
+    if [[ -z "${WBK_SKIP_SYNC:-}" ]]; then
+        [[ -x "$UV" ]] || fail "uv not found at $UV. Set UV=/path/to/uv."
+        echo "syncing environment in $WBK_HOME …"
+        "$UV" sync --frozen --directory "$WBK_HOME" \
+            || fail "uv sync failed; the lockfile and pyproject.toml must agree (run 'uv lock' if you changed dependencies)"
+    fi
 
     submit=("--output=$WBK_LOGS/wbk_%j.log")
     [[ -n "$WBK_NODE" ]] && submit+=("--nodelist=$WBK_NODE")
+
+    # A dry run needs the same allocation shape as the real thing — the plan it
+    # prints is derived from the node's cores and memory, so sizing it down
+    # would report a plan that no real run will ever use. It only needs the
+    # node for seconds, though, so cap the time rather than the resources.
+    if [[ "$WBK_MODULE" == "wbk_publish.discover" ]]; then
+        # A directory walk. It does not size itself from the allocation, so it
+        # has no reason to hold a node others are queuing for.
+        submit+=("--time=00:30:00" "--cpus-per-task=2" "--mem=8G" "--job-name=wbk_scan")
+    elif [[ "$WBK_MODULE" == "wbk_publish.batch_check" ]]; then
+        # Reports the same plan a real run would, so it needs the same
+        # allocation; SBATCH_ARGS carries the longer time limit.
+        submit+=("--exclusive" "--job-name=wbk_batchcheck")
+    elif [[ " $* " == *" --dry-run "* ]]; then
+        submit+=("--exclusive" "--time=00:15:00" "--job-name=wbk_dryrun")
+    else
+        submit+=("--exclusive")
+    fi
     # shellcheck disable=SC2206  # SBATCH_ARGS is deliberately word-split
     [[ -n "${SBATCH_ARGS:-}" ]] && submit+=(${SBATCH_ARGS})
 
@@ -106,6 +134,14 @@ if [[ -z "${SLURM_JOB_ID:-}" && -z "${WBK_LOCAL:-}" ]]; then
 fi
 
 # ── Inside the allocation ─────────────────────────────────────────────────────
+
+if [[ -n "${WBK_LOCAL:-}" ]]; then
+    echo "warning: WBK_LOCAL is set, so this is running outside SLURM." >&2
+    echo "         Conversions belong in an sbatch job: they need a whole node's" >&2
+    echo "         cores and memory, and sizing reads the SLURM allocation to" >&2
+    echo "         decide how many workers fit. Run without WBK_LOCAL unless you" >&2
+    echo "         are deliberately debugging on a host you have to yourself." >&2
+fi
 
 WBK_HOME="${WBK_HOME:-$(cd "$(dirname "$0")" && pwd -P)}"   # WBK_LOCAL path
 [[ -d "$WBK_HOME/wbk_publish" ]] || fail "no wbk_publish package under WBK_HOME=$WBK_HOME"

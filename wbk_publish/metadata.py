@@ -10,8 +10,10 @@ records what it did — under one top-level key:
         "dataset_id": "6710f...",
         "dataset_name": "20250921_p3l-eduke_MA040_1",
         "webknossos_url": "https://webknossos.embl-hamburg.de",
-        "layer": "xray",
-        "published_at": "2026-09-22T09:14:03+00:00"
+        "layers": {
+          "xray": "2026-09-22T09:14:03+00:00",
+          "predictions": "2026-09-30T09:02:11+00:00"
+        }
       }
     }
 
@@ -21,7 +23,9 @@ a second copy, and the id is the only stable handle for that (names can be
 edited in the WEBKNOSSOS UI). It has to be recorded somewhere derivable from the
 input path, because we need it *before* we know the id — hence this file.
 
-The block is keyed by the published directory's name because every directory in
+A dataset can carry several layers — a tomogram and a segmentation of it — so
+each is recorded with its own publication time under `layers`. The block is
+keyed by the published directory's name because every directory in
 a sample shares the one meta file: a tiled scan has `recon_111_1`, `recon_121_1`
 and `stitching_1` beside a single `meta_1.json`. Nothing else in the file is ever
 touched by a publish.
@@ -110,15 +114,39 @@ def read_dataset_id(meta_file: Path, input_dir: Path, log: logging.Logger) -> st
     return None
 
 
+def _layers_of(record: dict) -> dict[str, str]:
+    """A record's layers, migrating the single-layer form this replaced.
+
+    Records written before datasets could carry a second layer have `layer` and
+    `published_at` instead. Reading them as a one-entry mapping means the next
+    publish rewrites them in the new shape without losing when the first layer
+    went out.
+    """
+    layers = record.get("layers")
+    if isinstance(layers, dict):
+        return dict(layers)
+    if record.get("layer"):
+        return {record["layer"]: record.get("published_at", "")}
+    return {}
+
+
+def _last_published(record: dict) -> str | None:
+    """The most recent publication time across this record's layers."""
+    times = [t for t in _layers_of(record).values() if t]
+    return max(times) if times else None
+
+
 def report_staleness(meta_file: Path, input_dir: Path, log: logging.Logger) -> None:
     """Say whether the metadata changed after the last publish.
 
-    The recon tool stamps `last_updated` when it edits the file. Later than our
-    `published_at`, it means WEBKNOSSOS still shows the previous reconstruction.
+    The recon tool stamps `last_updated` when it edits the file. Later than the
+    most recent publish, it means WEBKNOSSOS still shows the previous
+    reconstruction. "Most recent" across all layers, since any of them being
+    older than the metadata is the thing worth saying.
     """
     data = _read_json(meta_file) or {}
     record = data.get(BLOCK_KEY, {}).get(input_dir.name) or {}
-    updated, published = data.get("last_updated"), record.get("published_at")
+    updated, published = data.get("last_updated"), _last_published(record)
     if not (updated and published):
         return
     try:
@@ -207,12 +235,17 @@ def record_publication(
     block = data.setdefault(BLOCK_KEY, {})
     if not isinstance(block, dict):
         block = data[BLOCK_KEY] = {}
+    # Keep the other layers' entries: a dataset may hold a tomogram and a
+    # segmentation of it, published at different times by different commands.
+    record = block.get(input_dir.name)
+    layers = _layers_of(record) if isinstance(record, dict) else {}
+    layers[layer_name] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     block[input_dir.name] = {
         "dataset_id": dataset_id,
         "dataset_name": dataset_name,
         "webknossos_url": WK_URL,
-        "layer": layer_name,
-        "published_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "layers": layers,
     }
 
     # Write-then-rename: a crash mid-write must not destroy the file.

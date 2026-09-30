@@ -11,7 +11,7 @@ convention.
     python -m wbk_publish.manual --input_dir /archive/2019/batch_5 \
         --stack_path /archive/2019/batch_5/tiffs \
         --sample_name 20190501_p3l-archive_exp5_1 \
-        --layer_type segmentation --layer_name predictions
+        --layer_type segmentation --layer_name predictions --new-dataset
 
 Like the beamline CLI, re-running on the same input replaces that layer on the
 dataset published before and keeps the dataset id.
@@ -60,7 +60,22 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
 
     # An explicit name is the escape hatch for paths that do not follow the
     # beamline layout; otherwise derive it the same way the beamline CLI does.
-    dataset_name = args.sample_name or dataset_name_from_path(input_dir)
+    if args.sample_name:
+        dataset_name = args.sample_name
+    else:
+        try:
+            dataset_name = dataset_name_from_path(input_dir)
+        except ValueError as exc:
+            # Most often this is someone pointing --input_dir at a directory
+            # that is not a run directory — a segmentation output, say. The
+            # derivation cannot work there, but --sample_name makes it moot.
+            raise ValueError(
+                f"{exc}\n"
+                "  Pass --sample_name to state the dataset name yourself, in the\n"
+                "  form YYYYMMDD_p3l-account_SAMPLE_RUN. That is what it is for:\n"
+                "  --input_dir only has to follow the beamline layout when the\n"
+                "  name is being derived from it."
+            ) from exc
     validate_dataset_name(dataset_name)
     parts = parse_dataset_name(dataset_name)
 
@@ -89,6 +104,7 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
         sampling_mode=args.sampling_mode,
         dataset_id=args.dataset_id,
         replace_legacy=args.replace_legacy,
+        new_dataset=args.new_dataset,
         dry_run=args.dry_run,
     )
 
@@ -100,22 +116,26 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
+    # Both spellings are accepted for every flag. The underscore forms came
+    # first and existing triggers use them; the hyphenated ones match the
+    # beamline CLI, so a batch can apply one set of common arguments to lines
+    # of either kind.
     parser.add_argument(
-        "--input_dir",
+        "--input_dir", "--input-dir",
         required=True,
         type=Path,
         help="The recon or stitching directory. Its name keys the publication record in the metadata file.",
     )
     parser.add_argument(
-        "--stack_path",
+        "--stack_path", "--stack-path",
         help="Directory holding the TIFF slices. Derived from --input_dir when omitted.",
     )
     parser.add_argument(
-        "--sample_name",
+        "--sample_name", "--sample-name",
         help="Dataset name (YYYYMMDD_p3l-account_SAMPLE_RUN). Derived from the path when omitted.",
     )
     parser.add_argument(
-        "--voxel_size",
+        "--voxel_size", "--voxel-size",
         type=parse_voxel_size,
         default="650,650,650",
         help="Voxel size in nm, '650' or '650,650,650' (default: 650,650,650)",
@@ -139,22 +159,22 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional subfolder under the account, e.g. Datasets/p3l-eduke/<project>",
     )
     parser.add_argument(
-        "--layer_name",
+        "--layer_name", "--layer-name",
         default=DEFAULT_LAYER_NAME,
         help=f"Name of the layer to write (default: {DEFAULT_LAYER_NAME})",
     )
     parser.add_argument(
-        "--layer_type",
+        "--layer_type", "--layer-type",
         choices=["color", "segmentation"],
         default="color",
         help="Layer category (default: color)",
     )
     parser.add_argument(
-        "--metadata_file",
+        "--metadata_file", "--metadata-file",
         help="MX-Cube metadata JSON. Defaults to meta_<run>.json beside the sample directory.",
     )
     parser.add_argument(
-        "--sampling_mode",
+        "--sampling_mode", "--sampling-mode",
         choices=["anisotropic", "isotropic", "constant_z"],
         default="anisotropic",
         help="Downsampling scheme for the magnification pyramid (default: anisotropic)",
@@ -172,6 +192,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="If the matched dataset was published by the old system and cannot be "
         "updated in place, publish a new dataset alongside it instead of refusing",
+    )
+    parser.add_argument(
+        "--new-dataset",
+        action="store_true",
+        help="Confirm that a layer named something other than the default should "
+             "start a NEW dataset. Without it, publishing a non-default layer when "
+             "no existing dataset was found is refused, because it would leave the "
+             "layer orphaned in a dataset of its own.",
     )
     parser.add_argument(
         "--dry-run",

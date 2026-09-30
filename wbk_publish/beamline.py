@@ -47,7 +47,11 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
         # Beamline datasets are filed by acquisition date under the account.
         folder_path=f"{parts.user}/{parts.imaging_date}",
         user_team=parts.user,
-        metadata_file=find_mx_cube_metadata(input_dir, parts.run_number),
+        metadata_file=find_mx_cube_metadata(
+            input_dir,
+            parts.run_number,
+            explicit=Path(args.metadata_file) if args.metadata_file else None,
+        ),
         voxel_size_nm=(voxel, voxel, voxel),
         token=get_auth_token(args.token),
         layer_name=DEFAULT_LAYER_NAME,
@@ -71,6 +75,13 @@ def main(argv: list[str] | None = None) -> int:
         "input_dir",
         type=Path,
         help="The recon or stitching directory, e.g. .../recon_111_1/ or .../stitching_1/",
+    )
+    parser.add_argument(
+        "--metadata-file",
+        help="MX-Cube metadata JSON to read, and to record the publication in. "
+             "Defaults to meta_<run>.json beside the sample directory. Give it "
+             "explicitly when the acquisition metadata lives somewhere else, or "
+             "when a stitching has no meta file of its own.",
     )
     parser.add_argument(
         "--voxel-size",

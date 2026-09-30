@@ -34,7 +34,7 @@ from webknossos import (
     webknossos_context,
 )
 
-from .config import TEMP_BASE, WK_URL
+from .config import DEFAULT_LAYER_NAME, TEMP_BASE, WK_URL
 from .convert import build_layer, check_input_available, collect_tiffs
 from .ngff import capture_layer_metadata, write_group_metadata
 from .resources import WorkerPlan, plan_for_stack
@@ -78,6 +78,9 @@ class PublishRequest:
     # A dataset from the old system cannot be updated in place. With this set,
     # publish a new one alongside it instead of refusing.
     replace_legacy: bool = False
+    # Confirms that a layer named something other than 'xray' really is meant to
+    # start a new dataset, rather than be added to one that already exists.
+    new_dataset: bool = False
     dry_run: bool = False
 
 
@@ -112,6 +115,18 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
                 "The old one stays until you delete it in WEBKNOSSOS."
             )
             dataset_id = None
+
+        # Adding a second layer is the one flow where a failed lookup is worse
+        # than an error: it would publish a NEW dataset containing only the
+        # segmentation, with no xray beside it, and nothing would say so. A
+        # non-default layer name almost always means "add to an existing
+        # dataset", so make the operator say which one.
+        if (
+            dataset_id is None
+            and request.layer_name != DEFAULT_LAYER_NAME
+            and not request.new_dataset
+        ):
+            raise RuntimeError(_orphan_layer_message(request))
 
         if request.dry_run:
             _report_dry_run(request, dataset_id, plan, log)
@@ -184,6 +199,23 @@ def _is_legacy(dataset_id: str, token: str, log: logging.Logger) -> bool:
         # _delete_layer explain it if it turns out to be legacy after all.
         return False
     return not virtual
+
+
+def _orphan_layer_message(request: PublishRequest) -> str:
+    return (
+        f"No existing dataset was found, so publishing layer '{request.layer_name}' "
+        f"now would create a NEW dataset containing only that layer —\n"
+        f"no '{DEFAULT_LAYER_NAME}' beside it. That is almost never what is wanted "
+        "when the layer name is not the default.\n"
+        "\n"
+        "Nothing has been changed.\n"
+        "\n"
+        "To add this layer to a dataset that already exists, give its id:\n"
+        f"    --dataset-id <id>          ({WK_URL}/datasets/<id> — copy it from the URL)\n"
+        "\n"
+        "If a new dataset really is intended, say so explicitly:\n"
+        "    --new-dataset\n"
+    )
 
 
 def _legacy_message(dataset_id: str, request: PublishRequest) -> str:
