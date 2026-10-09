@@ -110,7 +110,7 @@ For data in the standard tree. This is the default, so you don't name a module.
 | displayed name | the short readable form |
 | folder | `Datasets/<account>/<date>` |
 | teams | your p3l account team, plus `ximg` |
-| layer | always `xray`, always colour |
+| layer | always `<readable name>_xray`, always colour |
 
 None of these can be overridden here — that's the point. A trigger firing with a
 wrong argument must not be able to publish a mislabelled dataset. If you need to
@@ -124,15 +124,23 @@ change any of them, use the manual CLI.
 
   dataset name   20260615_p3l-doejw_MB012_1        (the directory name)
   shown in UI    MB012_1
+  layer          MB012_1_xray
   folder         Datasets/p3l-doejw/20260615
 ```
+
+**The layer is named after the dataset**, with `_xray` after it. A layer that
+carries the sample name says what it is on its own — in a dataset that has
+several layers, in a link someone sends you, in a figure panel — where a layer
+called plainly `xray` only says which modality it was.
 
 A `recon_XYZ_N` run contributes only its trailing number. A `stitching_N` is kept
 whole:
 
 ```
 .../20260615/MB012/stitching_1     →  20260615_p3l-doejw_MB012_stitching_1
+                                      layer: MB012_stitching_1_xray
 .../20261102/tooth_A7/recon_121_2  →  20261102_p3l-doejw_tooth_A7_2
+                                      layer: tooth_A7_2_xray
 ```
 
 ### The command
@@ -189,7 +197,7 @@ WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 ```
 
 **Re-publish after a better reconstruction.** Exactly the same command as the
-first time. The log will say `Dataset exists (id=…) — replacing layer 'xray'`,
+first time. The log will say `Dataset exists (id=…) — replacing layer 'MB012_1_xray'`,
 and the id will not change, so shared links and existing annotations survive:
 
 ```bash
@@ -197,6 +205,13 @@ WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
     /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
     --voxel-size 650
 ```
+
+> **Datasets published before October 2026** have a layer called plainly `xray`,
+> from before layers were named after their dataset. Re-publishing one adds
+> `MB012_1_xray` beside it rather than replacing it, and the run says so. The old
+> layer is left alone — it is published data, and nothing here deletes that on
+> the strength of a name. Delete it in WEBKNOSSOS once the new layer looks right,
+> or the dataset will show the same tomogram twice and take up twice the space.
 
 **At 20x magnification** — the voxel size is the one thing you must get right,
 because nothing else knows the magnification you used:
@@ -278,7 +293,7 @@ the beamline CLI uses.
 | `--sample_name NAME` | derived from the path | the dataset name, `YYYYMMDD_p3l-account_SAMPLE_RUN` |
 | `--voxel_size` | `650,650,650` | `650`, or `x,y,z` in nm |
 | `--project NAME` | filed by date | subfolder under the account |
-| `--layer_name NAME` | `xray` | which layer to write |
+| `--layer_name NAME` | `<readable name>_xray` | which layer to write |
 | `--layer_type` | `color` | `color` or `segmentation` |
 | `--sampling_mode` | `anisotropic` | `anisotropic`, `isotropic`, `constant_z` |
 | `--metadata_file PATH` | `<sample>/meta_<run>.json` | read metadata from, and record the publication in |
@@ -353,7 +368,7 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 **4. Adding a segmentation alongside an existing tomogram**
 
 Use for model predictions or manual labels. This adds a second layer to the
-**same dataset** — it does not touch `xray`.
+**same dataset** — it does not touch the tomogram layer.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
@@ -367,17 +382,17 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 *Change:* `--stack_path` to your label TIFFs, `--layer_name` to whatever you want
 it called in the viewer.
 *Result:* the log says `Dataset has no 'predictions' layer yet — adding it.
-Existing layers: ['xray']`, and the dataset gains the layer.
+Existing layers: ['MB012_1_xray']`, and the dataset gains the layer.
 *Note:* segmentation stacks must be integer-typed, not float.
 
 **Adding `--dataset-id` is the safer habit.** If the lookup does not find the
 dataset, publishing a non-default layer would create a *new* dataset holding
-only the segmentation, with no `xray` — which is why the run refuses rather than
+only the segmentation, with no tomogram — which is why the run refuses rather than
 doing it:
 
 ```
 No existing dataset was found, so publishing layer 'predictions' now would
-create a NEW dataset containing only that layer — no 'xray' beside it.
+create a NEW dataset containing only that layer — no 'MB012_1_xray' beside it.
 Nothing has been changed.
 To add this layer to a dataset that already exists, give its id:
     --dataset-id <id>
@@ -423,7 +438,7 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
     --layer_name phase_contrast
 ```
 
-*Result:* the dataset `MB012_1` now has both `xray` and `phase_contrast`.
+*Result:* the dataset `MB012_1` now has both `MB012_1_xray` and `phase_contrast`.
 
 ---
 
@@ -458,7 +473,7 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 ```
 
 *Change:* the id — copy it from the dataset's URL in WEBKNOSSOS.
-*Result:* the `xray` layer on that dataset is replaced; the id and all links stay.
+*Result:* the `MB012_1_xray` layer on that dataset is replaced; the id and all links stay.
 
 ---
 
@@ -653,7 +668,7 @@ datasets, so both are kept.
 ./wbk_batch.sh predictions.txt
 ```
 
-Each line adds its layer to the existing dataset without touching `xray`, and
+Each line adds its layer to the existing dataset without touching the tomogram, and
 the dataset's `meta_<run>.json` lists every layer with its own publication time.
 If a tomogram has not been published yet, that line fails on its own with a
 message saying so — the rest continue.
@@ -806,6 +821,55 @@ it is safe to delete.
 | `scan_orphans.py` | find orphaned dataset directories and stale mags on the storage |
 | `probe_overwrite.py` | verify against the live server that layer replacement frees the old data |
 | `tests/run_all.py` | the test suite; run it after any change |
+| `insegt/insegt_to_wk.py` | send insegt3d predictions back as segmentation layers — runs on your own computer, see below |
+
+### Sending insegt3d predictions back to WEBKNOSSOS
+
+insegt3d writes a probability per class (0–255). `insegt/insegt_to_wk.py` thresholds
+each class into a mask and adds it to the dataset as a segmentation layer
+`class_1`, `class_2`, … — the same numbers insegt3d's own `labels` use.
+
+**This one runs on your own computer, not the cluster.** It talks to WEBKNOSSOS over
+HTTPS only. You need [uv](https://docs.astral.sh/uv/), your own token, and the
+dataset id (the last part of the dataset's URL):
+
+```bash
+export WK_TOKEN=<your token>
+```
+
+Check first. This reads the prediction, finds which magnification it was made at and
+lists what would be added or replaced, but uploads nothing:
+
+```bash
+uv run insegt/insegt_to_wk.py <output>/predictions/xray__1a2b3c --dataset-id <id> --dry-run
+```
+
+Then run it for real, usually skipping the background class. `--channels` is 0-based:
+channel 0 becomes `class_1`.
+
+```bash
+uv run insegt/insegt_to_wk.py <output>/predictions/xray__1a2b3c --dataset-id <id> --channels 1,2
+```
+
+| flag | when you need it |
+|---|---|
+| `--threshold N` | default 128, i.e. probability ≥ 0.5 |
+| `--channels 1,2` | upload only these classes |
+| `--channel-names mito,nuclei` | your own layer names instead of `class_N` |
+| `--mag 4-4-2` | the prediction is at a mag the dataset does not have |
+| `--work-dir DIR` | where to build the layers before upload (default: system temp) |
+| `--jobs N` | parallel tiles and downsampling workers |
+
+Running it again **replaces** layers with the same name; nothing is duplicated and the
+dataset id stays the same. The layers are built and downsampled on your computer
+first and uploaded afterwards, so a failure while building changes nothing on the
+server. Only datasets published by this pipeline work (they are "virtual"). An
+old-system dataset is refused before any work is done, because the server rejects
+uploads to it. To use one, re-publish it first with `--replace-legacy` (§5); that
+gives it a new id, so run this against the new one.
+
+`insegt/wk_push.py` is the same thing as one function, `push_predictions(prediction,
+dataset_id, token)`, for wiring into insegt3d as a button.
 
 ---
 

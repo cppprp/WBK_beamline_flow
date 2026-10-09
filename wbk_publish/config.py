@@ -30,7 +30,18 @@ TEMP_BASE = Path(os.environ.get("WK_TEMP_BASE", "/morningstar/tmp"))
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-DEFAULT_LAYER_NAME = "xray"
+# A layer is named after the dataset it belongs to, with this suffix: the
+# dataset 20250921_p3l-eduke_MA040_1 publishes its tomogram as the layer
+# MA040_1_xray. Shadowing the readable name means a layer identifies itself
+# wherever it is seen — in a dataset that has several, in a URL, in a figure —
+# which a bare 'xray' does not. See naming.default_layer_name.
+DEFAULT_LAYER_SUFFIX = "xray"
+
+# Publishes made before that convention named the layer plainly 'xray'. Still
+# recognised, so re-publishing such a dataset can say that the old layer is
+# still there rather than quietly leaving two copies of the same data.
+LEGACY_LAYER_NAME = "xray"
+
 DEFAULT_VOXEL_SIZE_NM = (650.0, 650.0, 650.0)
 
 # Worker counts are not configured here — they are derived per run from the stack

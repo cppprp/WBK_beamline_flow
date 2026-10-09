@@ -8,6 +8,7 @@ from _support import WORK as SC  # noqa: E402 - sets sys.path and env
 from wbk_publish.logs import make_logger
 from wbk_publish.manual import parse_voxel_size
 from wbk_publish.naming import (
+    default_layer_name,
     dataset_name_from_path,
     parse_dataset_name,
     resolve_tiff_stack,
@@ -52,6 +53,14 @@ eq("date", p.imaging_date, "20250921")
 p2 = parse_dataset_name("20251130_p3l-eduke_tree_2x2x10_stitching_1")
 eq("stitch readable", p2.readable_name, "tree_2x2x10_stitching_1")
 eq("stitch run", p2.run_number, "1")
+
+print("— the layer name shadows the dataset's readable name")
+# A layer called plainly 'xray' is ambiguous the moment it is seen outside its
+# dataset: in a link, a figure, or a dataset holding several layers.
+eq("recon layer", default_layer_name(parse_dataset_name(
+    dataset_name_from_path(recon)).readable_name), "MA040_1_xray")
+eq("stitch layer", default_layer_name(parse_dataset_name(
+    dataset_name_from_path(stitch)).readable_name), "tree_2x2x10_stitching_1_xray")
 
 eq("recon stack", resolve_tiff_stack(recon).name, "tomo")
 eq("stitch stack", resolve_tiff_stack(stitch).name, "stack")

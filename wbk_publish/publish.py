@@ -34,8 +34,9 @@ from webknossos import (
     webknossos_context,
 )
 
-from .config import DEFAULT_LAYER_NAME, TEMP_BASE, WK_URL
+from .config import LEGACY_LAYER_NAME, TEMP_BASE, WK_URL
 from .convert import build_layer, check_input_available, collect_tiffs
+from .naming import default_layer_name
 from .ngff import capture_layer_metadata, write_group_metadata
 from .resources import WorkerPlan, plan_for_stack
 from .remote import (
@@ -67,7 +68,10 @@ class PublishRequest:
     metadata_file: Path  # meta_<run>.json
     voxel_size_nm: tuple[float, float, float]
     token: str
-    layer_name: str = "xray"
+    # None means "the default for this dataset": the readable name with the
+    # xray suffix, filled in below once readable_name is known. Both CLIs leave
+    # it unset for a tomogram and pass a name only for a further layer.
+    layer_name: str | None = None
     category: str = "color"
     # Upper bounds, not targets — the actual worker count is derived from the
     # stack geometry and the machine's allocation. See resources.py.
@@ -78,10 +82,15 @@ class PublishRequest:
     # A dataset from the old system cannot be updated in place. With this set,
     # publish a new one alongside it instead of refusing.
     replace_legacy: bool = False
-    # Confirms that a layer named something other than 'xray' really is meant to
-    # start a new dataset, rather than be added to one that already exists.
+    # Confirms that a layer named something other than the dataset's own default
+    # really is meant to start a new dataset, rather than be added to one that
+    # already exists.
     new_dataset: bool = False
     dry_run: bool = False
+
+    def __post_init__(self) -> None:
+        if self.layer_name is None:
+            self.layer_name = default_layer_name(self.readable_name)
 
 
 def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | None:
@@ -118,12 +127,12 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
 
         # Adding a second layer is the one flow where a failed lookup is worse
         # than an error: it would publish a NEW dataset containing only the
-        # segmentation, with no xray beside it, and nothing would say so. A
-        # non-default layer name almost always means "add to an existing
-        # dataset", so make the operator say which one.
+        # segmentation, with no tomogram beside it, and nothing would say so. A
+        # layer name other than this dataset's own default almost always means
+        # "add to an existing dataset", so make the operator say which one.
         if (
             dataset_id is None
-            and request.layer_name != DEFAULT_LAYER_NAME
+            and request.layer_name != default_layer_name(request.readable_name)
             and not request.new_dataset
         ):
             raise RuntimeError(_orphan_layer_message(request))
@@ -205,8 +214,8 @@ def _orphan_layer_message(request: PublishRequest) -> str:
     return (
         f"No existing dataset was found, so publishing layer '{request.layer_name}' "
         f"now would create a NEW dataset containing only that layer —\n"
-        f"no '{DEFAULT_LAYER_NAME}' beside it. That is almost never what is wanted "
-        "when the layer name is not the default.\n"
+        f"no '{default_layer_name(request.readable_name)}' beside it. That is almost "
+        "never what is wanted when the layer name is not this dataset's default.\n"
         "\n"
         "Nothing has been changed.\n"
         "\n"
@@ -370,6 +379,7 @@ def _overwrite_layer(
                     f"Dataset has no '{request.layer_name}' layer yet — adding it. "
                     f"Existing layers: {sorted(remote_ds.layers)}"
                 )
+                _warn_about_legacy_layer(request, remote_ds, log)
 
             extra = {}
             if request.category == "segmentation":
@@ -420,6 +430,37 @@ _GATEWAY_STATUSES = ("502", "503", "504")
 
 class LayerDeletionTimeout(RuntimeError):
     """`delete_layer` did not return in time. The server may still be working."""
+
+
+def _warn_about_legacy_layer(
+    request: PublishRequest, remote_ds: RemoteDataset, log: logging.Logger
+) -> None:
+    """Point out a plain 'xray' layer left by a publish from before the rename.
+
+    Layers used to be called 'xray' regardless of which dataset they were on.
+    Re-publishing such a dataset now writes MA040_1_xray instead, which the
+    overwrite path treats as a new layer — so the old one stays, and the dataset
+    ends up showing the same tomogram twice.
+
+    This is not deleted automatically. The old layer is real published data, and
+    removing it on the strength of its name is the operator's call, not a side
+    effect of a re-publish.
+    """
+    if request.layer_name == LEGACY_LAYER_NAME:
+        return
+    if LEGACY_LAYER_NAME not in remote_ds.layers:
+        return
+    if request.layer_name != default_layer_name(request.readable_name):
+        return
+
+    log.warning(
+        f"This dataset still has a layer called '{LEGACY_LAYER_NAME}', from a publish "
+        f"made before layers were named after their dataset. It holds the same "
+        f"tomogram as the '{request.layer_name}' layer being written now, and it is "
+        f"left in place — nothing here deletes published data.\n"
+        f"    Remove it in WEBKNOSSOS once the new layer looks right:\n"
+        f"    {WK_URL}/datasets/{remote_ds.dataset_id}"
+    )
 
 
 def _delete_layer(

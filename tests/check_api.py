@@ -98,6 +98,18 @@ def main():
           {"directory_name", "organization_id"})
     ok("User.organization_id", hasattr(wk.User, "organization_id"))
 
+    print("— insegt/: adding layers to an existing dataset over HTTPS")
+    ok("TransferMode.HTTP", hasattr(wk.TransferMode, "HTTP"))
+    needs("RemoteDataset.add_layer_as_copy", wk.RemoteDataset.add_layer_as_copy,
+          {"foreign_layer", "transfer_mode"})
+    from webknossos.dataset.layer.view.mag_view import MagView
+    needs("MagView.write", MagView.write, {"data", "absolute_offset", "allow_unaligned"})
+    needs("Layer.add_mag", Layer.add_mag, {"mag", "chunk_shape", "shard_shape", "compress"})
+    needs("Layer.downsample", Layer.downsample,
+          {"from_mag", "sampling_mode", "shard_shape", "executor"})
+    for attr in ("first_name", "last_name", "email"):
+        ok(f"User.{attr}", hasattr(wk.User, attr))
+
     print("— cluster_tools: spawn is what makes the thread cap reach workers")
     ex = cluster_tools.get_executor("multiprocessing", max_workers=1)
     method = ex._mp_context.get_start_method()

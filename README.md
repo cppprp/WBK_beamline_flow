@@ -373,6 +373,39 @@ On the cluster, where the files are on the same filesystem, skip HTTP entirely a
 the published directory directly — that is what `ngff.py` restores the group metadata
 for.
 
+## Sending insegt3d predictions back
+
+`insegt/` holds two standalone files that add thresholded insegt3d predictions to an
+existing dataset as segmentation layers: `insegt_to_wk.py` (CLI, dry run, checks) and
+`wk_push.py` (one function, for embedding into insegt3d). Usage is in
+[docs/USAGE.md](docs/USAGE.md#sending-insegt3d-predictions-back-to-webknossos).
+
+They share nothing with the cluster pipeline on purpose: they run on a user's own
+computer, with no access to morningstar. So there is no staging directory and no
+`MOVE_AND_SYMLINK`. Each layer is built and downsampled in a local temp directory,
+then uploaded with `RemoteDataset.add_layer_as_copy(transfer_mode=TransferMode.HTTP)`,
+a resumable upload to the datastore. Two consequences:
+
+- Mag upload is only accepted by **virtual** datasets, so old-system datasets are
+  refused up front, just as in the cluster pipeline. This was tested for the HTTP route
+  on 2026-10-07 with `insegt/probe_legacy_upload.py`. On a virtual dataset, upload,
+  read-back and replace all worked. On a legacy one, `reserveUpload` returned 403
+  ("Data store could not be found or accessed"). The message is misleading: the same
+  account and datastore had just succeeded on a virtual dataset. Re-run the probe after
+  a server upgrade to see whether that has changed.
+- `add_layer_as_copy` registers the layer *before* uploading its data, so a refused
+  upload would leave an empty layer in the datasource. Both scripts remove it again.
+- `ngff.py` cannot run (no filesystem access), so these layers have no group
+  `zarr.json` on disk. WEBKNOSSOS and the streaming links are unaffected.
+
+insegt3d predicts at the pyramid level its model was trained on, so the mag is
+matched by **shape** against the tomogram layer's mags (anisotropic ones included), never
+by level index. The downsampled pyramid is aligned to the dataset's existing mags.
+Work is split into whole output shards (1024 x 1024 x 64), so memory stays near
+`jobs x 64 MiB` and threads never share a shard. Empty tiles are not written, which
+keeps uploads of sparse classes small. `tests/check_insegt.py` builds from a fixture
+laid out like insegt3d's output and requires both files to produce identical layers.
+
 ## How a run decides what to do
 
 1. `--dataset-id`, if given.
@@ -413,8 +446,9 @@ published:
       "dataset_id": "68d2a1f04c3b9e0017a3c5d1",
       "dataset_name": "20260111_p3l-faberjw_123-10-T4_1",
       "webknossos_url": "https://webknossos.embl-hamburg.de",
-      "layer": "xray",
-      "published_at": "2026-07-09T08:02:51+00:00"
+      "layers": {
+        "123-10-T4_1_xray": "2026-07-09T08:02:51+00:00"
+      }
     }
   },
   "last_updated": "2026-07-08T17:38:05Z"

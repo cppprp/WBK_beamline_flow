@@ -2,8 +2,12 @@
 
 The dangerous case is quiet rather than loud: publishing `predictions` when the
 lookup finds nothing would create a new dataset holding only the segmentation,
-with no `xray` beside it, and the run would report success. Nothing downstream
+with no tomogram beside it, and the run would report success. Nothing downstream
 notices — the dataset simply exists and is wrong.
+
+The guard keys on the layer name differing from the dataset's own default, which
+is the readable name plus `_xray` — so the default is a different string for
+every dataset and cannot be hardcoded here.
 
 So publish() refuses that combination, and the escape hatch has to be explicit.
 Exercised here without a server, by stubbing the two calls that need one.
@@ -17,7 +21,7 @@ def main() -> int:
     import importlib
 
     pub = importlib.import_module("wbk_publish.publish")
-    from wbk_publish.config import DEFAULT_LAYER_NAME
+    from wbk_publish.naming import default_layer_name
     from wbk_publish.logs import make_logger
     from wbk_publish.publish import PublishRequest
 
@@ -46,9 +50,19 @@ def main() -> int:
         base.update(overrides)
         return PublishRequest(**base)
 
+    print("— the layer is named after the dataset, not after the modality")
+    r.eq("default layer name", request().layer_name, "LAYERS_1_xray")
+    r.eq("an explicit name is kept", request(layer_name="predictions").layer_name,
+         "predictions")
+
     print("— the default layer publishes a new dataset without ceremony")
     found["id"] = None
     r.ok("dry run completes", pub.publish(request(), log) is None)
+
+    print("— spelling out the default by hand is still the default, not an orphan")
+    # Someone copying the layer name off a dataset page must not trip the guard.
+    found["id"] = None
+    r.ok("not refused", pub.publish(request(layer_name="LAYERS_1_xray"), log) is None)
 
     print("— a non-default layer with nothing to attach to is refused")
     found["id"] = None
@@ -59,7 +73,8 @@ def main() -> int:
         msg = str(exc)
         r.ok("raises", True)
         r.ok("names the layer", "'predictions'" in msg)
-        r.ok(f"says there would be no {DEFAULT_LAYER_NAME}", f"no '{DEFAULT_LAYER_NAME}'" in msg)
+        expected = default_layer_name("LAYERS_1")
+        r.ok(f"says there would be no {expected}", f"no '{expected}'" in msg)
         r.ok("says nothing was changed", "Nothing has been changed" in msg)
         r.ok("offers --dataset-id", "--dataset-id" in msg)
         r.ok("offers --new-dataset", "--new-dataset" in msg)

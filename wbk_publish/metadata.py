@@ -11,7 +11,7 @@ records what it did — under one top-level key:
         "dataset_name": "20250921_p3l-eduke_MA040_1",
         "webknossos_url": "https://webknossos.embl-hamburg.de",
         "layers": {
-          "xray": "2026-09-22T09:14:03+00:00",
+          "MA040_1_xray": "2026-09-22T09:14:03+00:00",
           "predictions": "2026-09-30T09:02:11+00:00"
         }
       }

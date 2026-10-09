@@ -36,6 +36,7 @@ CHECKS = [
     ("check_batch", "folder discovery and the batch submitter's list parsing"),
     ("check_layers", "adding a layer to an existing dataset, and refusing to orphan one"),
     ("check_legacy", "legacy datasets refused before conversion; --replace-legacy"),
+    ("check_insegt", "insegt3d predictions: reading, mag matching, thresholded layers"),
     ("check_api", "webknossos API surface the pipeline depends on"),
 ]
 

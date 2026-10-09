@@ -11,6 +11,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from .config import DEFAULT_LAYER_SUFFIX
+
 # YYYYMMDD_p3l-account_SAMPLE_RUN
 DATASET_NAME_PATTERN = re.compile(r"^\d{8}_p3l-[\w]+_.+$")
 
@@ -95,6 +97,21 @@ def parse_dataset_name(dataset_name: str) -> DatasetNameParts:
         readable_name="_".join(parts[2:]),
         run_number=parts[-1],
     )
+
+
+def default_layer_name(readable_name: str) -> str:
+    """The layer name a tomogram publishes under when none is given.
+
+    The dataset's readable name with the suffix after it:
+
+        MA040_1                 → MA040_1_xray
+        tree_2x2x10_stitching_1 → tree_2x2x10_stitching_1_xray
+
+    A layer named after its dataset says which sample it is wherever it appears
+    on its own — in the layer list of a dataset that has several, in a shared
+    URL, in a figure panel. A bare 'xray' says only what modality it was.
+    """
+    return f"{readable_name}_{DEFAULT_LAYER_SUFFIX}"
 
 
 def resolve_tiff_stack(input_dir: Path) -> Path:

@@ -8,3 +8,6 @@ logs/
 
 # API token lives here; never commit it
 .config/
+
+# datasource backups written by insegt/probe_legacy_upload.py
+datasource_*.json

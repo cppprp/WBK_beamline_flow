@@ -17,7 +17,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import DEFAULT_LAYER_NAME, get_auth_token
+from .config import get_auth_token
 from .logs import make_logger
 from .naming import (
     dataset_name_from_path,
@@ -54,7 +54,8 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
         ),
         voxel_size_nm=(voxel, voxel, voxel),
         token=get_auth_token(args.token),
-        layer_name=DEFAULT_LAYER_NAME,
+        # No layer_name: a tomogram takes the dataset's own default,
+        # <readable name>_xray.
         category="color",
         max_workers=args.cpus,
         max_memory=args.max_memory,

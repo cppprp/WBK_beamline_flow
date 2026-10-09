@@ -21,7 +21,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .config import DEFAULT_LAYER_NAME, get_auth_token
+from .config import DEFAULT_LAYER_SUFFIX, get_auth_token
 from .logs import make_logger
 from .naming import (
     dataset_name_from_path,
@@ -160,8 +160,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--layer_name", "--layer-name",
-        default=DEFAULT_LAYER_NAME,
-        help=f"Name of the layer to write (default: {DEFAULT_LAYER_NAME})",
+        default=None,
+        help="Name of the layer to write. Defaults to the dataset's readable name "
+             f"followed by '_{DEFAULT_LAYER_SUFFIX}', so MA040_1 publishes as "
+             f"MA040_1_{DEFAULT_LAYER_SUFFIX}. Give a name only for a further layer, "
+             "such as a segmentation.",
     )
     parser.add_argument(
         "--layer_type", "--layer-type",
