@@ -288,11 +288,13 @@ the beamline CLI uses.
 
 | flag | default | what it does |
 |---|---|---|
-| `--input_dir DIR` | **required** | the run directory; its name keys the record in the metadata file |
+| `--input_dir DIR` | **required** (with `--zarr`: the store) | the run directory; its name keys the record in the metadata file |
 | `--stack_path DIR` | `<input_dir>/tomo` or `/stack` | where the TIFFs actually are |
+| `--zarr PATH` | — | publish a zarr store instead of TIFFs (§5, example 10) |
+| `--channel N` | — | which channel of a multi-channel zarr to publish, 0-based |
 | `--sample_name NAME` | derived from the path | the dataset name, `YYYYMMDD_p3l-account_SAMPLE_RUN` |
 | `--voxel_size` | `650,650,650` | `650`, or `x,y,z` in nm |
-| `--project NAME` | filed by date | subfolder under the account |
+| `--project NAME` | none — straight under the account | subfolder under the account |
 | `--layer_name NAME` | `<readable name>_xray` | which layer to write |
 | `--layer_type` | `color` | `color` or `segmentation` |
 | `--sampling_mode` | `anisotropic` | `anisotropic`, `isotropic`, `constant_z` |
@@ -343,7 +345,9 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 
 *Change:* both paths, and `--sample_name` — it must look like
 `YYYYMMDD_p3l-account_SAMPLE_RUN` or it will be rejected.
-*Result:* published as `batch5_1` into `Datasets/p3l-doejw/20190501`.
+*Result:* published as `batch5_1` into `Datasets/p3l-doejw`. Unlike the beamline
+CLI, the manual one does **not** file by date — pass `--project` if you want a
+subfolder.
 *Note:* `--stack_path` is needed because the TIFFs are in `tiffs/`, not
 `tomo/` or `stack/`.
 
@@ -508,6 +512,41 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
     --voxel_size 650 \
     --dry-run
 ```
+
+**10. A zarr store instead of a TIFF stack**
+
+A zarr anywhere on the ximg mount (a plain array or OME-Zarr, zarr v2 or v3)
+publishes like a TIFF stack: same conversion, same pyramid, and re-running
+replaces the layer and keeps the dataset id.
+
+```bash
+WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
+    --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr \
+    --sample_name 20260115_p3l-eduke_MA040_1 \
+    --voxel_size 650 \
+    --dry-run
+```
+
+*Change:* the path, `--sample_name` (a zarr path has no beamline layout to derive
+the name from), and `--voxel_size`.
+*Result:* published as `MA040_1` with layer `MA040_1_xray` into `Datasets/p3l-eduke`.
+The dataset id is recorded in `meta_1.json` **beside the store** (created if
+missing), which is how the next run finds the same dataset.
+*Note:*
+- **One channel per run.** A store with several channels is refused until you pick
+  one with `--channel N`. To publish more channels, run once per channel with
+  `--layer_name` and `--dataset-id`, as in example 4.
+- **Check the voxel size.** If the store's OME metadata states one (with units),
+  the run compares it with `--voxel_size` and warns if they differ. It still uses
+  `--voxel_size`, because OME units are often wrong. The default is 650 nm, so
+  leaving the flag out is the easy mistake; the dry run shows the warning.
+- Axes are taken from the store's own metadata (OME axes, or zarr v3
+  `dimension_names`). An array with neither is read as x, y, z.
+- **Binary masks** go in as `--layer_type segmentation`. A uint8 mask is stored as
+  is, and its foreground value is the segment id: 0/1 gives id 1, 0/255 gives 255.
+  A bool mask is converted to uint8 0/1 while reading. A float store is refused as a
+  segmentation before anything is converted: re-save a float mask as uint8, and
+  threshold probabilities first.
 
 ---
 
@@ -679,6 +718,82 @@ The scan says so rather than returning an empty file, and names what the path
 must contain. Predictions that cannot be attributed to a dataset by their path
 cannot be attributed by any other means either — nothing else links the two
 trees — so the fix is to move or rename them, not to work around it.
+
+### A batch of zarr stores
+
+There is no scan for zarr stores: they can sit anywhere, so nothing in their path
+names the dataset. Write the list by hand, one `manual:` line per store, each with
+its own `--sample_name`:
+
+```
+# zarr stores — one line each; the name cannot be derived from the path
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr --sample_name 20260115_p3l-eduke_MA040_1
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA041.zarr --sample_name 20260115_p3l-eduke_MA041_1 \
+        --voxel_size 325
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/two_ch.zarr --channel 1 --sample_name 20260115_p3l-eduke_TWO_1
+```
+
+Then the same three steps as any batch:
+
+```bash
+./wbk_batch.sh zarrs.batch --voxel-size 650 --check     # print the commands
+./wbk_batch.sh zarrs.batch --voxel-size 650 --dry-run   # one job checks every line
+./wbk_batch.sh zarrs.batch --voxel-size 650             # one job per store
+```
+
+The batch dry run is worth it here more than anywhere. It reports per store a
+multi-channel store without `--channel`, and a `--voxel_size` that disagrees
+with the store's own metadata, before anything is converted. Lines can mix
+zarr stores and TIFF runs. Each store's dataset id is recorded in `meta_<run>.json`
+beside it, so re-submitting the same list replaces layers rather than duplicating.
+
+### One after another on one node: `--sequential`
+
+Normally every line is its own job and they run in parallel. Some lines must not:
+**several layers of one dataset**, such as three zarr volumes that are channels of
+the same sample. Each run holds a lock on its dataset, so in parallel only one would
+get through and the others would stop with "Another run is already publishing".
+
+`--sequential` submits **one** job instead, on one exclusive node, that publishes
+the lines in list order, each starting when the one before it has finished:
+
+```
+# three channels of one dataset, in the order they must run
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch0.zarr --sample_name 20260115_p3l-eduke_MA040_1 \
+        --layer_name MA040_1_ch0 --new-dataset
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch1.zarr --sample_name 20260115_p3l-eduke_MA040_1 \
+        --layer_name MA040_1_ch1
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch2.zarr --sample_name 20260115_p3l-eduke_MA040_1 \
+        --layer_name MA040_1_ch2
+```
+
+```bash
+./wbk_batch.sh channels.batch --voxel-size 650 --check --sequential   # the order, nothing submitted
+./wbk_batch.sh channels.batch --voxel-size 650 --sequential           # one job, three publishes
+```
+
+- **Same `--sample_name` on every line** puts the layers in one dataset.
+- **A different `--layer_name` per line.** Otherwise each line would replace the one
+  before it.
+- **`--new-dataset` on the first line only.** It creates the dataset; the later lines
+  find it by name. If the first line is the tomogram itself, leave out both its
+  `--layer_name` and `--new-dataset`.
+- **Order matters.** The line that creates the dataset comes first.
+
+A failed line does not stop the rest. A line that depended on it then fails at
+once, before converting anything, because its dataset does not exist. The end of
+the log lists every line with ok/FAILED and how long it took.
+
+**The time limit covers the whole batch**, not each line. The default is 8 hours.
+For long conversions raise it:
+
+```bash
+SBATCH_ARGS="--time=24:00:00" ./wbk_batch.sh channels.batch --voxel-size 650 --sequential
+```
+
+Check first with `--dry-run` as usual (without `--sequential`). A dry run already runs
+as one job, line by line. On a dry run, lines after the first report that no dataset
+exists yet, because the first line is not really run: that is expected here.
 
 ### Checking afterwards
 

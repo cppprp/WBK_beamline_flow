@@ -90,7 +90,7 @@ def collect_tiffs(tiff_stack: Path) -> list[Path]:
 
 
 def build_layer(
-    tiff_files: list[Path],
+    source: list[Path] | Path,
     out_path: Path,
     *,
     dataset_name: str,
@@ -100,12 +100,23 @@ def build_layer(
     plan: WorkerPlan,
     sampling_mode: str,
     log: logging.Logger,
+    channel: int | None = None,
+    dtype: str | None = None,
 ) -> Dataset:
-    """Convert the stack into a zarr3 dataset at `out_path` and downsample it."""
+    """Convert the input into a zarr3 dataset at `out_path` and downsample it.
+
+    `source` is the TIFF slices in z order, or a zarr store (see zarr_input.py);
+    `channel` selects one channel of a multi-channel zarr; `dtype` converts
+    while reading (a bool zarr is written as uint8).
+    """
     import cluster_tools
 
+    # Slice-level error reporting only makes sense for a slice list.
+    tiff_files = source if isinstance(source, list) else []
+    images = [str(t) for t in source] if isinstance(source, list) else str(source)
+    what = f"{len(source)} slices" if isinstance(source, list) else f"zarr store {source}"
     log.info(
-        f"Converting {len(tiff_files)} slices → zarr3 "
+        f"Converting {what} → zarr3 "
         f"(layer '{layer_name}', {category}, voxel size {voxel_size_nm} nm)"
     )
 
@@ -122,11 +133,13 @@ def build_layer(
     ) as executor:
         try:
             layer = dataset.add_layer_from_images(
-                images=[str(t) for t in tiff_files],
+                images=images,
                 layer_name=layer_name,
                 category=category,
                 data_format=DATA_FORMAT,
                 compress=True,
+                channel=channel,
+                dtype=dtype,
                 executor=executor,
             )
         except ImageConversionError as exc:

@@ -183,6 +183,7 @@ def main() -> int:
         "/data/MB014/recon_111_1  --voxel-size 325\n"
         "manual: --input_dir /data/MB012/stitching_1 \\\n"
         "        --layer_name predictions --layer_type segmentation\n"
+        "manual: --zarr /data/exports/MA040.zarr --sample_name 20260115_p3l-test_MA040_1\n"
     )
     out = subprocess.run(
         [str(REPO_ROOT / "wbk_batch.sh"), str(list_file), "--voxel-size", "650", "--check"],
@@ -190,7 +191,7 @@ def main() -> int:
     )
     r.eq("exits cleanly", out.returncode, 0)
     submissions = [ln.strip() for ln in out.stdout.splitlines() if "wbk_publish_job.sh" in ln]
-    r.eq("one submission per real line", len(submissions), 3)
+    r.eq("one submission per real line", len(submissions), 4)
     r.ok("comments and blanks skipped", all("# a comment" not in s for s in submissions))
     r.ok("plain lines use the beamline CLI",
          submissions[0].startswith("WBK_MODULE=wbk_publish.beamline"))
@@ -199,6 +200,9 @@ def main() -> int:
     r.ok("the manual: prefix is not passed on", "manual:" not in submissions[2].split("job.sh")[1])
     r.ok("continuation joined into one submission",
          "--layer_name predictions" in submissions[2] and "--input_dir" in submissions[2])
+    r.ok("a --zarr line goes to the manual CLI as written",
+         submissions[3].startswith("WBK_MODULE=wbk_publish.manual")
+         and "--zarr /data/exports/MA040.zarr" in submissions[3])
     r.ok("common arguments applied to every line",
          all("--voxel-size 650" in s for s in submissions))
     # argparse takes the last occurrence, so a per-line value must come after.
@@ -225,19 +229,63 @@ def main() -> int:
         capture_output=True, text=True, env=env,
     )
     r.eq("exits cleanly", out.returncode, 0)
-    r.ok("says it is submitting one job", "one job to dry-run all 3" in out.stdout)
+    r.ok("says it is submitting one job", "one job to dry-run all 4" in out.stdout)
+    r.ok("a --zarr line is labelled by its store",
+         "will check    /data/exports/MA040.zarr" in out.stdout)
     r.eq("and only one sbatch happened", out.stdout.count("Submitted batch job"), 1)
 
     plan = list_file.with_suffix(".txt.plan")
     r.ok("an expanded plan was written", plan.is_file())
     rows = [ln.split("\t") for ln in plan.read_text().splitlines() if ln.strip()]
-    r.eq("one row per submission", len(rows), 3)
+    r.eq("one row per submission", len(rows), 4)
     r.ok("each names its module", all(row[0].startswith("wbk_publish.") for row in rows))
     r.ok("each carries --dry-run", all("--dry-run" in row for row in rows))
     r.ok("the manual row is routed to the manual CLI",
          rows[2][0] == "wbk_publish.manual")
     r.ok("arguments are separate fields, so paths with spaces survive",
          all(" " not in field for row in rows for field in row))
+
+    print("— --sequential: one job publishes the lines in order")
+    # Several channels of one dataset must not run at once: the per-dataset
+    # lock would refuse all but one. This puts the whole list in one job.
+    out = subprocess.run(
+        [str(REPO_ROOT / "wbk_batch.sh"), str(list_file), "--voxel-size", "650", "--sequential"],
+        capture_output=True, text=True, env=env,
+    )
+    r.eq("exits cleanly", out.returncode, 0)
+    r.ok("says it is submitting one job", "one job to publish all 4" in out.stdout)
+    r.eq("and only one sbatch happened", out.stdout.count("Submitted batch job"), 1)
+    r.ok("it runs the batch runner", "submitting: wbk_publish.batch_run" in out.stdout)
+    r.ok("warns that the time limit covers all lines", "--time=" in out.stdout)
+    r.ok("lines are labelled as publishes", "will publish  /data/exports/MA040.zarr" in out.stdout)
+    rows = [ln.split("\t") for ln in plan.read_text().splitlines() if ln.strip()]
+    r.eq("one row per line, in list order", [row[-1] for row in rows][:1], ["/data/MB012/stitching_1"])
+    r.eq("four rows", len(rows), 4)
+    r.ok("no row is a dry run", all("--dry-run" not in row for row in rows))
+    r.ok("--sequential itself is not passed to the lines",
+         all("--sequential" not in row for row in rows))
+    out = subprocess.run(
+        [str(REPO_ROOT / "wbk_batch.sh"), str(list_file), "--sequential", "--check"],
+        capture_output=True, text=True,
+    )
+    r.ok("--check says they would run as one job", "would run as ONE job" in out.stdout)
+
+    print("— the batch runner: in order, each in its own process, failures do not stop it")
+    from wbk_publish import batch_run
+    order = WORK / "batch/order.txt"
+    order.unlink(missing_ok=True)
+    seq_plan = WORK / "batch/seq.plan"
+    # Real interpreters, stand-in modules: `-m timeit` runs its setup once (with
+    # -r 1) and records that it ran; `-m json.tool` on a missing file fails.
+    seq_plan.write_text(
+        "timeit\t-n\t1\t-r\t1\t-s\timport pathlib\tpathlib.Path('" + str(order) + "').open('a').write('first\\n')\n"
+        "json.tool\t/nonexistent/input.json\n"
+        "timeit\t-n\t1\t-r\t1\t-s\timport pathlib\tpathlib.Path('" + str(order) + "').open('a').write('third\\n')\n"
+    )
+    code = batch_run.main(["--plan", str(seq_plan)])
+    r.eq("reports the failure", code, 1)
+    lines = order.read_text().split() if order.exists() else []
+    r.eq("ran before and after the failing line, in order", lines, ["first", "third"])
 
     print("— the manual CLI accepts both flag spellings, so common args work for it")
     import argparse

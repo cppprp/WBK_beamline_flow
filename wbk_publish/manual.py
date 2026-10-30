@@ -13,6 +13,15 @@ convention.
         --sample_name 20190501_p3l-archive_exp5_1 \
         --layer_type segmentation --layer_name predictions --new-dataset
 
+    python -m wbk_publish.manual --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr \
+        --sample_name 20260115_p3l-eduke_MA040_1 --voxel_size 650
+
+A zarr store (plain array or OME-Zarr, v2 or v3) is accepted in place of a TIFF
+stack with --zarr. It may sit anywhere, so its name comes from --sample_name;
+--input_dir defaults to the store itself and only decides where the dataset id
+is recorded (meta_<run>.json beside it). A store with several channels needs
+--channel.
+
 Like the beamline CLI, re-running on the same input replaces that layer on the
 dataset published before and keeps the dataset id.
 """
@@ -56,7 +65,13 @@ def parse_voxel_size(value: str) -> tuple[float, float, float]:
 
 
 def build_request(args: argparse.Namespace) -> PublishRequest:
-    input_dir = Path(str(args.input_dir).rstrip("/"))
+    if args.zarr and args.stack_path:
+        raise ValueError("--zarr and --stack_path both name the input; give one.")
+    if args.input_dir is None and not args.zarr:
+        raise ValueError("--input_dir is required (it may only be left out with --zarr).")
+    # For a zarr the store itself is the natural record key: the dataset id is
+    # written to meta_<run>.json beside it, so a re-run updates the same dataset.
+    input_dir = Path(str(args.input_dir or args.zarr).rstrip("/"))
 
     # An explicit name is the escape hatch for paths that do not follow the
     # beamline layout; otherwise derive it the same way the beamline CLI does.
@@ -79,7 +94,12 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
     validate_dataset_name(dataset_name)
     parts = parse_dataset_name(dataset_name)
 
-    stack_path = Path(args.stack_path) if args.stack_path else resolve_tiff_stack(input_dir)
+    if args.zarr:
+        stack_path = Path(str(args.zarr).rstrip("/"))
+    elif args.stack_path:
+        stack_path = Path(args.stack_path)
+    else:
+        stack_path = resolve_tiff_stack(input_dir)
 
     folder_path = f"{parts.user}/{args.project}" if args.project else parts.user
 
@@ -105,6 +125,7 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
         dataset_id=args.dataset_id,
         replace_legacy=args.replace_legacy,
         new_dataset=args.new_dataset,
+        channel=args.channel,
         dry_run=args.dry_run,
     )
 
@@ -112,7 +133,7 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m wbk_publish.manual",
-        description="Publish a TIFF stack to WEBKNOSSOS as a zarr3 layer.",
+        description="Publish a TIFF stack or a zarr store to WEBKNOSSOS as a zarr3 layer.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -122,13 +143,24 @@ def main(argv: list[str] | None = None) -> int:
     # of either kind.
     parser.add_argument(
         "--input_dir", "--input-dir",
-        required=True,
         type=Path,
-        help="The recon or stitching directory. Its name keys the publication record in the metadata file.",
+        help="The recon or stitching directory. Its name keys the publication record in the "
+        "metadata file. Required, except with --zarr, where it defaults to the store.",
     )
     parser.add_argument(
         "--stack_path", "--stack-path",
         help="Directory holding the TIFF slices. Derived from --input_dir when omitted.",
+    )
+    parser.add_argument(
+        "--zarr",
+        type=Path,
+        help="Publish this zarr store (plain array or OME-Zarr, v2 or v3) instead of a TIFF "
+        "stack. Needs --sample_name unless --input_dir follows the beamline layout.",
+    )
+    parser.add_argument(
+        "--channel",
+        type=int,
+        help="Channel of a multi-channel zarr to publish (0-based). Required when it has several.",
     )
     parser.add_argument(
         "--sample_name", "--sample-name",
@@ -148,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         "derived from the stack size and the machine's CPU and memory allocation.",
     )
     parser.add_argument(
-        "--max-memory",
+        "--max-memory", "--max_memory",
         type=parse_memory_size,
         default=None,
         help="Memory this run may use, e.g. '400G'. Read from SLURM or the machine "
@@ -187,17 +219,17 @@ def main(argv: list[str] | None = None) -> int:
         help="WEBKNOSSOS API token. Defaults to $WK_TOKEN, then .config/auth_token.txt",
     )
     parser.add_argument(
-        "--dataset-id",
+        "--dataset-id", "--dataset_id",
         help="Overwrite this specific dataset, skipping the recorded id and the name lookup",
     )
     parser.add_argument(
-        "--replace-legacy",
+        "--replace-legacy", "--replace_legacy",
         action="store_true",
         help="If the matched dataset was published by the old system and cannot be "
         "updated in place, publish a new dataset alongside it instead of refusing",
     )
     parser.add_argument(
-        "--new-dataset",
+        "--new-dataset", "--new_dataset",
         action="store_true",
         help="Confirm that a layer named something other than the default should "
              "start a NEW dataset. Without it, publishing a non-default layer when "
@@ -205,7 +237,7 @@ def main(argv: list[str] | None = None) -> int:
              "layer orphaned in a dataset of its own.",
     )
     parser.add_argument(
-        "--dry-run",
+        "--dry-run", "--dry_run",
         action="store_true",
         help="Report what would happen without converting or transferring anything",
     )

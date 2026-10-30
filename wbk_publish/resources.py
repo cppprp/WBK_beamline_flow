@@ -407,7 +407,19 @@ def plan_for_stack(
     max_memory: int | None = None,
 ) -> WorkerPlan:
     """Probe the stack, size the run, and report the reasoning."""
-    stack = probe_stack(tiff_files)
+    return plan_for_shape(
+        probe_stack(tiff_files), log, max_workers=max_workers, max_memory=max_memory
+    )
+
+
+def plan_for_shape(
+    stack: StackShape,
+    log: logging.Logger,
+    *,
+    max_workers: int | None = None,
+    max_memory: int | None = None,
+) -> WorkerPlan:
+    """Size the run for a known geometry — a TIFF stack's, or a zarr store's."""
     cores = available_cores()
     total_ram = available_memory(max_memory)
 

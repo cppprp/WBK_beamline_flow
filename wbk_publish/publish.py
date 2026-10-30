@@ -38,7 +38,8 @@ from .config import LEGACY_LAYER_NAME, TEMP_BASE, WK_URL
 from .convert import build_layer, check_input_available, collect_tiffs
 from .naming import default_layer_name
 from .ngff import capture_layer_metadata, write_group_metadata
-from .resources import WorkerPlan, plan_for_stack
+from .resources import WorkerPlan, plan_for_shape, plan_for_stack
+from .zarr_input import check_zarr_input, conversion_dtype, is_zarr, probe_zarr
 from .remote import (
     attach_metadata,
     find_dataset_id_by_directory,
@@ -60,7 +61,7 @@ class PublishRequest:
     """Everything the pipeline needs. Both CLIs build one of these."""
 
     input_dir: Path  # the recon/stitching directory
-    tiff_stack: Path  # where the slices actually live
+    tiff_stack: Path  # where the slices live — or a zarr store (zarr_input.py)
     dataset_name: str  # 20250921_p3l-eduke_MA040_1
     readable_name: str  # MA040_1 — shown in the WEBKNOSSOS UI
     folder_path: str  # relative to Datasets/, e.g. "p3l-eduke/20250921"
@@ -86,6 +87,8 @@ class PublishRequest:
     # really is meant to start a new dataset, rather than be added to one that
     # already exists.
     new_dataset: bool = False
+    # Which channel of a multi-channel zarr input to publish. TIFF input ignores it.
+    channel: int | None = None
     dry_run: bool = False
 
     def __post_init__(self) -> None:
@@ -98,15 +101,9 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
     check_input_available(request.tiff_stack, log)
     check_staging_available(log)
 
-    # Cheap: a glob plus one TIFF header. Done before the lock so a dry run can
-    # report how the machine would be used.
-    tiff_files = collect_tiffs(request.tiff_stack)
-    plan = plan_for_stack(
-        tiff_files,
-        log,
-        max_workers=request.max_workers,
-        max_memory=request.max_memory,
-    )
+    # Cheap: a glob plus one TIFF header, or a zarr store's metadata. Done
+    # before the lock so a dry run can report how the machine would be used.
+    source, plan, dtype = _resolve_source(request, log)
 
     with _dataset_lock(request.dataset_name, log):
         dataset_id = _resolve_dataset_id(request, log)
@@ -144,9 +141,9 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
         raw_metadata = load_mx_cube_metadata(request.metadata_file, log)
 
         if dataset_id is None:
-            remote_ds = _fresh_upload(request, tiff_files, plan, log)
+            remote_ds = _fresh_upload(request, source, plan, log, dtype)
         else:
-            remote_ds = _overwrite_layer(request, tiff_files, plan, dataset_id, log)
+            remote_ds = _overwrite_layer(request, source, plan, dataset_id, log, dtype)
 
         with webknossos_context(token=request.token, url=WK_URL):
             attach_metadata(remote_ds, raw_metadata, log)
@@ -163,6 +160,28 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
 
     log.info(f"Done: {WK_URL}/datasets/{resolved_id}")
     return remote_ds
+
+
+def _resolve_source(request: PublishRequest, log: logging.Logger):
+    """The input to convert, the worker plan, and any dtype to convert to while reading."""
+    dtype = None
+    if is_zarr(request.tiff_stack):
+        info = probe_zarr(request.tiff_stack)
+        check_zarr_input(info, request.channel, request.voxel_size_nm, log)
+        dtype = conversion_dtype(info, request.category, log)
+        shape = info.stack_shape()
+        source = request.tiff_stack
+    else:
+        if request.channel is not None:
+            raise ValueError("--channel applies to zarr input only; this is a TIFF stack.")
+        source = collect_tiffs(request.tiff_stack)
+        shape = None
+    plan = (
+        plan_for_shape(shape, log, max_workers=request.max_workers, max_memory=request.max_memory)
+        if shape is not None
+        else plan_for_stack(source, log, max_workers=request.max_workers, max_memory=request.max_memory)
+    )
+    return source, plan, dtype
 
 
 def check_staging_available(log: logging.Logger) -> None:
@@ -278,15 +297,16 @@ def _resolve_dataset_id(request: PublishRequest, log: logging.Logger) -> str | N
 
 def _fresh_upload(
     request: PublishRequest,
-    tiff_files: list[Path],
+    source: list[Path] | Path,
     plan: WorkerPlan,
     log: logging.Logger,
+    dtype: str | None = None,
 ) -> RemoteDataset:
     log.info("No existing dataset — publishing a new one")
 
     with TemporaryDirectory(dir=TEMP_BASE, prefix=f"{request.dataset_name}.") as tmp:
         local_ds = build_layer(
-            tiff_files,
+            source,
             Path(tmp),
             dataset_name=request.dataset_name,
             voxel_size_nm=request.voxel_size_nm,
@@ -295,6 +315,8 @@ def _fresh_upload(
             plan=plan,
             sampling_mode=request.sampling_mode,
             log=log,
+            channel=request.channel,
+            dtype=dtype,
         )
 
         # The upload transfers mags only; capture the group metadata before
@@ -333,10 +355,11 @@ def _fresh_upload(
 
 def _overwrite_layer(
     request: PublishRequest,
-    tiff_files: list[Path],
+    source: list[Path] | Path,
     plan: WorkerPlan,
     dataset_id: str,
     log: logging.Logger,
+    dtype: str | None = None,
 ) -> RemoteDataset:
     """Replace one layer on an existing dataset, preserving the dataset id.
 
@@ -347,7 +370,7 @@ def _overwrite_layer(
 
     with TemporaryDirectory(dir=TEMP_BASE, prefix=f"{request.dataset_name}.") as tmp:
         local_ds = build_layer(
-            tiff_files,
+            source,
             Path(tmp),
             dataset_name=request.dataset_name,
             voxel_size_nm=request.voxel_size_nm,
@@ -356,6 +379,8 @@ def _overwrite_layer(
             plan=plan,
             sampling_mode=request.sampling_mode,
             log=log,
+            channel=request.channel,
+            dtype=dtype,
         )
         local_layer = local_ds.get_layer(request.layer_name)
 
@@ -627,7 +652,9 @@ def _report_dry_run(
     log.info(f"  Dataset name:   {request.dataset_name}")
     log.info(f"  Readable name:  {request.readable_name}")
     log.info(f"  Layer:          {request.layer_name} ({request.category})")
-    log.info(f"  Image stack:    {request.tiff_stack}")
+    kind = "zarr store" if is_zarr(request.tiff_stack) else "TIFF stack"
+    channel = f", channel {request.channel}" if request.channel is not None else ""
+    log.info(f"  Input:          {request.tiff_stack} ({kind}{channel})")
     log.info(f"  Voxel size:     {request.voxel_size_nm} nm")
     log.info(f"  Folder:         Datasets/{request.folder_path}")
     log.info(f"  Teams:          {request.user_team} + ximg")

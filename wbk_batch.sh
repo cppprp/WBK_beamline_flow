@@ -42,6 +42,9 @@
 #   --only PATTERN  with --scan: only runs matching, e.g. 'stitching_*'
 #   --out FILE      with --scan: where to write the list
 #   --check         print the submissions without submitting anything
+#   --sequential    one job on one node that publishes the lines in order, one
+#                   after another, instead of one job per line. For lines that
+#                   must not run at once, e.g. several channels of one dataset.
 #
 # Environment: WBK_NODE, WBK_LOGS, WBK_HOME and SBATCH_ARGS behave as they do
 # for wbk_publish_job.sh, and are passed through.
@@ -90,20 +93,25 @@ LIST="$1"; shift
 
 CHECK=0
 DRYRUN=0
+SEQUENTIAL=0
 common=()
 for arg in "$@"; do
     case "$arg" in
-        --check)   CHECK=1 ;;
-        --dry-run) DRYRUN=1; common+=("$arg") ;;
-        *)         common+=("$arg") ;;
+        --check)      CHECK=1 ;;
+        --dry-run|--dry_run) DRYRUN=1; common+=("$arg") ;;
+        --sequential) SEQUENTIAL=1 ;;
+        *)            common+=("$arg") ;;
     esac
 done
 
 # A dry run of a whole list goes into one job rather than one per line. The
 # checks take seconds each; it is the exclusive allocation that is expensive,
 # and forty of them would hold the node against everyone else all morning.
+#
+# --sequential reuses the same expanded plan for real runs: one job, the lines
+# in list order, each started only when the one before it has finished.
 PLAN=""
-if [[ $DRYRUN -eq 1 && $CHECK -eq 0 ]]; then
+if [[ ($DRYRUN -eq 1 || $SEQUENTIAL -eq 1) && $CHECK -eq 0 ]]; then
     PLAN="$LIST.plan"
     : > "$PLAN"
 fi
@@ -138,12 +146,12 @@ submit_line() {
     local all=(${common[@]+"${common[@]}"} "${args[@]}")
 
     # What to call this submission in the output and the manifest. A beamline
-    # line starts with the path; a manual one names it after --input_dir, which
-    # is the only part a human will recognise later.
+    # line starts with the path; a manual one names it after --input_dir (or
+    # --zarr, which has none), the only part a human will recognise later.
     local label="${args[0]}"
     local i
     for ((i = 0; i < ${#args[@]} - 1; i++)); do
-        if [[ "${args[i]}" == "--input_dir" || "${args[i]}" == "--input-dir" ]]; then
+        if [[ "${args[i]}" == "--input_dir" || "${args[i]}" == "--input-dir" || "${args[i]}" == "--zarr" ]]; then
             label="${args[i + 1]}"
             break
         fi
@@ -159,7 +167,7 @@ submit_line() {
         printf '%s' "$module" >> "$PLAN"
         printf '\t%s' "${all[@]}" >> "$PLAN"
         printf '\n' >> "$PLAN"
-        echo "  will check  $label"
+        if [[ $DRYRUN -eq 1 ]]; then echo "  will check    $label"; else echo "  will publish  $label"; fi
         submitted=$((submitted + 1))
         return
     fi
@@ -202,8 +210,21 @@ done < "$LIST"
 
 echo
 if [[ $CHECK -eq 1 ]]; then
+    [[ $SEQUENTIAL -eq 1 ]] && echo "--sequential: these would run as ONE job, in this order"
     echo "--check: nothing was submitted"
     rm -f "$MANIFEST"
+elif [[ -n "$PLAN" && $DRYRUN -eq 0 ]]; then
+    rm -f "$MANIFEST"
+    if [[ $submitted -eq 0 ]]; then
+        echo "nothing to publish"
+        rm -f "$PLAN"
+        exit 0
+    fi
+    echo
+    echo "submitting one job to publish all $submitted of them, one after another"
+    echo "the job's time limit covers ALL of them: for long conversions set e.g."
+    echo "  SBATCH_ARGS=\"--time=24:00:00\""
+    WBK_MODULE=wbk_publish.batch_run exec "$JOB" --plan "$PLAN"
 elif [[ -n "$PLAN" ]]; then
     rm -f "$MANIFEST"
     if [[ $submitted -eq 0 ]]; then

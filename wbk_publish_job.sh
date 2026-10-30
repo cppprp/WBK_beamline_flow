@@ -118,7 +118,11 @@ if [[ -z "${SLURM_JOB_ID:-}" && -z "${WBK_LOCAL:-}" ]]; then
         # Reports the same plan a real run would, so it needs the same
         # allocation; SBATCH_ARGS carries the longer time limit.
         submit+=("--exclusive" "--job-name=wbk_batchcheck")
-    elif [[ " $* " == *" --dry-run "* ]]; then
+    elif [[ "$WBK_MODULE" == "wbk_publish.batch_run" ]]; then
+        # Real publishes, one after another, on one exclusive node. The time
+        # limit is the default unless SBATCH_ARGS raises it for a long batch.
+        submit+=("--exclusive" "--job-name=wbk_sequence")
+    elif [[ " $* " == *" --dry-run "* || " $* " == *" --dry_run "* ]]; then
         submit+=("--exclusive" "--time=00:15:00" "--job-name=wbk_dryrun")
     else
         submit+=("--exclusive")

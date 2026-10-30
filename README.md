@@ -373,6 +373,27 @@ On the cluster, where the files are on the same filesystem, skip HTTP entirely a
 the published directory directly — that is what `ngff.py` restores the group metadata
 for.
 
+## Zarr stores as input
+
+`--zarr` on the manual CLI publishes a zarr store (plain array or OME-Zarr, v2 or v3)
+in place of a TIFF stack. webknossos reads both through the same
+`add_layer_from_images` call, so conversion, pyramid, hand-over and re-runs are
+shared code. Only the steps before conversion differ, in `zarr_input.py`:
+
+- **The plan's geometry comes from metadata.** There is no TIFF header to probe;
+  the store's shape and dtype give the same `StackShape`, and `plan_for_shape`
+  sizes the run. Conversion still splits along z with full xy planes per worker,
+  so the TIFF-calibrated memory model applies. It has not been measured on zarr
+  input yet; check the `Peak memory` line on the first large run.
+- **Multi-channel stores are refused without `--channel`.** One run publishes one
+  layer, and webknossos refuses to add a multi-channel source as a single layer.
+- **`--voxel_size` stays authoritative.** An OME scale with known units is compared
+  with it and a mismatch is a warning, not an override.
+
+Batch lists take `manual: --zarr ...` lines like any other (USAGE §6). The scan
+(`discover.py`) still finds TIFF runs only: a zarr's path carries no dataset name,
+so its lines are written by hand.
+
 ## Sending insegt3d predictions back
 
 `insegt/` holds two standalone files that add thresholded insegt3d predictions to an
