@@ -22,6 +22,17 @@ XIMG_TEAM = os.environ.get("WK_XIMG_TEAM", "ximg")
 # which is an os.rename() and therefore cannot cross a mount point.
 TEMP_BASE = Path(os.environ.get("WK_TEMP_BASE", "/morningstar/tmp"))
 
+# Where the server puts datasets it has been handed. Not used to build any path
+# — the server decides those, and tells us at reserve time. It is here only so a
+# run can check it is writable before converting, because the hand-over is the
+# very last step and a permission problem there costs the whole conversion.
+# Setting it to an empty string turns that check off — hence None rather than
+# Path(""), which pathlib silently turns into Path(".").
+_published_base = os.environ.get(
+    "WK_PUBLISHED_BASE", "/morningstar/webknossos/.published/EMBL_Hamburg/.virtual"
+)
+PUBLISHED_BASE = Path(_published_base) if _published_base else None
+
 # Beamline data mount. Checked before any conversion work starts so a missing
 # mount fails in seconds rather than halfway through a stack.
 # No input-filesystem setting on purpose: stacks come from beegfs, ximg and the

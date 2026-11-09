@@ -506,6 +506,7 @@ Defaults live in `config.py` and can be overridden per environment:
 | `WK_URL` | `https://webknossos.embl-hamburg.de` | Server |
 | `WK_TOKEN` | — | API token; else `.config/auth_token.txt` |
 | `WK_TEMP_BASE` | `/morningstar/tmp` | Conversion staging |
+| `WK_PUBLISHED_BASE` | `…/.published/EMBL_Hamburg/.virtual` | Hand-over target; checked writable before converting (`''` disables) |
 | `WK_XIMG_TEAM` | `ximg` | Facility-wide team |
 
 **`WK_TEMP_BASE` must be on the same filesystem as the WEBKNOSSOS storage.**

@@ -8,9 +8,14 @@ This samples the worker processes while the conversion runs and logs the peak �
 the largest single worker, and the total across all of them — against what the
 plan assumed. Threads are counted the same way, because a thread cap that is
 set but not honoured (tensorstore's pools, before they were bounded) shows up
-here and nowhere else: memory looked fine on the run that died of it. Logged periodically, not only at the end, so a run that is killed
-partway still leaves its last reading in the log. That is the number that
-calibrates `resources.MEMORY_OVERHEAD_FACTOR`.
+here and nowhere else: memory looked fine on the run that died of it.
+
+The full breakdown — CPU, worker states, threads, the plan comparison — is
+logged once, when the phase ends. In between there is a single line every few
+minutes, because a run that is killed partway never reaches the final report and
+its last reading is then the only number there is; that is what calibrates
+`resources.MEMORY_OVERHEAD_FACTOR`. Four near-identical lines a minute, which is
+what this used to print, buried everything else in the log.
 
 Sampling is a daemon thread that only ever reads `/proc`; it cannot affect the
 conversion and never raises into it. It runs in the idle parent process, not in
@@ -43,7 +48,7 @@ class MemoryWatch:
         phase: str = "conversion",
         assumed_per_worker: int | None = None,
         sample_every: float = 2.0,
-        report_every: float = 60.0,
+        report_every: float = 300.0,
     ) -> None:
         self.log = log
         self.plan = plan
@@ -60,6 +65,7 @@ class MemoryWatch:
         self.workers_seen = 0
         self._cpu_samples: list[float] = []
         self._states: dict[str, int] = {}
+        self._warned = False
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="memwatch", daemon=True)
 
@@ -125,7 +131,41 @@ class MemoryWatch:
 
     # ── reporting ─────────────────────────────────────────────────────────────
 
+    def _report_progress(self) -> None:
+        """One line, so the log stays readable while the phase runs.
+
+        Enough to calibrate from if the run is killed before the final report,
+        which is the only reason to print anything mid-phase at all. The CPU,
+        worker-state and thread breakdowns do not change meaningfully minute to
+        minute, so they wait for the end.
+        """
+        if self.workers_seen == 0:
+            return
+
+        line = (
+            f"Memory so far ({self.phase}): largest worker {_fmt_bytes(self.peak_worker)}, "
+            f"total {_fmt_bytes(self.peak_total)}, {self.workers_seen} workers"
+        )
+        ratio = self.peak_worker / self.assumed if self.assumed else 0.0
+        if self.assumed >= _COMPARABLE_FROM:
+            line += f" ({ratio:.2f}x plan)"
+        self.log.info(line)
+
+        # Once, and now rather than in a final report an OOM-killed run never
+        # reaches. The detailed advice stays at the end.
+        if ratio > 1.15 and self.assumed >= _COMPARABLE_FROM and not self._warned:
+            self._warned = True
+            self.log.warning(
+                f"Workers are using {ratio:.2f}x the memory this phase was sized on. "
+                "If the job dies, re-run with --max-memory below the node's RAM to "
+                "force fewer workers."
+            )
+
     def _report(self, *, final: bool) -> None:
+        if not final:
+            self._report_progress()
+            return
+
         # The first cpu_percent() call only starts the clock; it reads 0.0.
         busy = [c for c in self._cpu_samples[1:]]
         if busy:
@@ -138,14 +178,12 @@ class MemoryWatch:
             )
 
         if self.workers_seen == 0:
-            if final:
-                self.log.info("Memory: no worker processes were observed")
+            self.log.info("Memory: no worker processes were observed")
             return
 
         assumed = self.assumed
-        label = f"Peak memory ({self.phase})" if final else f"Memory so far ({self.phase})"
         line = (
-            f"{label}: largest worker {_fmt_bytes(self.peak_worker)}, "
+            f"Peak memory ({self.phase}): largest worker {_fmt_bytes(self.peak_worker)}, "
             f"total {_fmt_bytes(self.peak_total)} across up to {self.workers_seen} workers"
         )
 
@@ -173,7 +211,7 @@ class MemoryWatch:
         self.log.info(line + f" (plan assumed {_fmt_bytes(assumed)}/worker; actual is {ratio:.2f}x that)")
         self.log.info(threads)
 
-        if final and ratio > 1.15:
+        if ratio > 1.15:
             # Past the margin in resources.ESTIMATE_MARGIN, the sizing would have
             # overcommitted the node on a bigger stack.
             if self.phase == "downsampling":

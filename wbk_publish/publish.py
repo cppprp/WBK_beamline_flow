@@ -34,7 +34,7 @@ from webknossos import (
     webknossos_context,
 )
 
-from .config import LEGACY_LAYER_NAME, TEMP_BASE, WK_URL
+from .config import LEGACY_LAYER_NAME, PUBLISHED_BASE, TEMP_BASE, WK_URL
 from .convert import build_layer, check_input_available, collect_tiffs
 from .naming import default_layer_name
 from .ngff import capture_layer_metadata, write_group_metadata
@@ -100,6 +100,7 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
     """Run the pipeline. Returns None for a dry run."""
     check_input_available(request.tiff_stack, log)
     check_staging_available(log)
+    check_published_writable(log)
 
     # Cheap: a glob plus one TIFF header, or a zarr store's metadata. Done
     # before the lock so a dry run can report how the machine would be used.
@@ -182,6 +183,65 @@ def _resolve_source(request: PublishRequest, log: logging.Logger):
         else plan_for_stack(source, log, max_workers=request.max_workers, max_memory=request.max_memory)
     )
     return source, plan, dtype
+
+
+def check_published_writable(log: logging.Logger) -> None:
+    """Refuse early if we could not hand a dataset over at the end.
+
+    The hand-over is the last step of a publish: the client creates the dataset
+    directory under the published root and renames the staged layer into it. A
+    missing permission there fails *after* the conversion and the pyramid, and
+    the staged copy is discarded with the exception — so an hour of work is lost
+    to something that was knowable in a millisecond.
+
+    Deliberately asymmetric, because a false refusal is worse than a late
+    failure:
+
+      * not writable  → refuse now. That is a definite failure later.
+      * absent        → warn only. The server decides the real destination and
+                        does not say where until reserve time, so a path that
+                        does not exist here may just mean this node mounts the
+                        storage somewhere else. Refusing would block a run that
+                        would have worked.
+
+    Advisory either way: os.access cannot see NFS ACLs or a root-squashed
+    export, so a pass is not a guarantee — it only rules out the common case of
+    the published directory not being group-writable for this account.
+    """
+    if PUBLISHED_BASE is None:
+        return
+
+    if not PUBLISHED_BASE.is_dir():
+        log.warning(
+            f"Cannot check the published directory before converting: {PUBLISHED_BASE} "
+            "is not there. If this node mounts the WEBKNOSSOS storage somewhere else, "
+            "set WK_PUBLISHED_BASE to that path (or to '' to silence this). A "
+            "permission problem will then only surface at hand-over, after the "
+            "conversion."
+        )
+        return
+
+    if os.access(PUBLISHED_BASE, os.W_OK | os.X_OK):
+        log.debug(f"Published directory is writable: {PUBLISHED_BASE}")
+        return
+
+    raise RuntimeError(
+        f"The published directory is not writable by you: {PUBLISHED_BASE}\n"
+        "\n"
+        "Nothing has been changed. Refusing now rather than at hand-over, which is "
+        "after the conversion and would discard it.\n"
+        "\n"
+        "A publish creates the dataset directory here and renames the converted "
+        "layer into it, so write and execute are both needed. Ask the owner of that "
+        "directory to give your group write access:\n"
+        f"    chmod g+rwxs {PUBLISHED_BASE}\n"
+        "and check you are in that group:  id -nG\n"
+        "\n"
+        "The setgid bit matters: without it the directories you create keep your own "
+        "group and the next person hits this too. Note it only affects new "
+        "directories — replacing a layer on a dataset somebody else published needs "
+        "write inside that dataset's own directory as well."
+    )
 
 
 def check_staging_available(log: logging.Logger) -> None:
@@ -579,6 +639,68 @@ def _timeout_message(
 # ── Support ───────────────────────────────────────────────────────────────────
 
 
+def _open_lock(lock_path: Path):
+    """Open the lock file, writable by anyone who comes next.
+
+    `open(path, "a+")` needs write permission on an existing file, so a lock
+    left behind by a killed job would stop every *other* user from even opening
+    it — and not with "the lock is held" but with a PermissionError. The staging
+    directory is shared and jobs get killed, so that is the common case, not the
+    rare one.
+
+    A lock file holds nothing worth protecting and its whole purpose is to be
+    contended, so it is created 0666 and the next run takes it over whoever left
+    it. The mode is set explicitly because O_CREAT's mode is masked by the
+    umask, and only the owner may chmod — so for a file somebody else created
+    that is best-effort, and the caller explains the failure if it is still
+    unwritable.
+
+    Not truncated on open: the holder's identity has to survive for a contending
+    run to read, and truncating before the lock is taken would destroy it.
+    """
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o666)
+    try:
+        if os.fstat(fd).st_mode & 0o777 != 0o666:
+            os.fchmod(fd, 0o666)
+    except OSError:
+        pass  # someone else's file; we hold it open, which is what matters
+    return os.fdopen(fd, "r+")
+
+
+def _unwritable_lock_message(dataset_name: str, lock_path: Path) -> str:
+    owner = "unknown"
+    holder = "unknown"
+    try:
+        import pwd
+
+        owner = pwd.getpwuid(lock_path.stat().st_uid).pw_name
+    except (OSError, KeyError, ImportError):
+        pass
+    try:
+        holder = lock_path.read_text().strip() or "unknown"
+    except OSError:
+        pass
+
+    return (
+        f"Cannot take the publication lock for '{dataset_name}': the lock file "
+        f"exists and is not writable by you.\n"
+        f"  lock:     {lock_path}\n"
+        f"  owner:    {owner}\n"
+        f"  held by:  {holder}\n"
+        "\n"
+        "Nothing has been changed.\n"
+        "\n"
+        "A run that fails normally removes its own lock, so this is almost always "
+        "one left behind by a job that was killed. Check whether that job is still "
+        "running (the line above names its host and SLURM id). If it is not, remove "
+        "the file and re-run:\n"
+        f"    rm {lock_path}\n"
+        "\n"
+        f"If {owner} cannot be reached and the staging directory is sticky, only they "
+        "or root can remove it."
+    )
+
+
 @contextmanager
 def _dataset_lock(dataset_name: str, log: logging.Logger) -> Iterator[None]:
     """Prevent two runs from publishing the same dataset at once.
@@ -587,28 +709,39 @@ def _dataset_lock(dataset_name: str, log: logging.Logger) -> Iterator[None]:
     releases it if the process is killed.
     """
     lock_path = TEMP_BASE / f"{dataset_name}.lock"
-    lock_file = open(lock_path, "a+")
     try:
-        try:
-            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            # With jobs running on different cluster nodes, "another run" is
-            # not actionable on its own. The holder wrote down who it is. Read
-            # it through a fresh open: over NFS the descriptor we already hold
-            # may serve a cached, empty view of a file another host just wrote,
-            # and close-to-open consistency only revalidates on open.
-            try:
-                holder = lock_path.read_text().strip() or "unknown"
-            except OSError:
-                holder = "unknown"
-            raise RuntimeError(
-                f"Another run is already publishing '{dataset_name}'.\n"
-                f"  held by: {holder}\n"
-                f"  lock:    {lock_path}\n"
-                "If that job is no longer running, the lock is stale — remove the "
-                "file and re-run."
-            ) from None
+        lock_file = _open_lock(lock_path)
+    except PermissionError:
+        raise RuntimeError(_unwritable_lock_message(dataset_name, lock_path)) from None
 
+    # Taking the lock is kept out of the try/finally below on purpose. That
+    # finally unlinks the file, and a run that failed to acquire the lock must
+    # not delete the file the holder is still using: flock lives on the inode,
+    # so the holder would keep working while a third run created a fresh file
+    # at the same path and locked that — two runs, both believing they are
+    # alone, publishing the same dataset.
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_file.close()
+        # With jobs running on different cluster nodes, "another run" is not
+        # actionable on its own. The holder wrote down who it is. Read it
+        # through a fresh open: over NFS the descriptor we held may serve a
+        # cached, empty view of a file another host just wrote, and
+        # close-to-open consistency only revalidates on open.
+        try:
+            holder = lock_path.read_text().strip() or "unknown"
+        except OSError:
+            holder = "unknown"
+        raise RuntimeError(
+            f"Another run is already publishing '{dataset_name}'.\n"
+            f"  held by: {holder}\n"
+            f"  lock:    {lock_path}\n"
+            "If that job is no longer running, the lock is stale — remove the "
+            "file and re-run."
+        ) from None
+
+    try:
         lock_file.seek(0)
         lock_file.truncate()
         lock_file.write(_lock_holder())
@@ -620,7 +753,14 @@ def _dataset_lock(dataset_name: str, log: logging.Logger) -> Iterator[None]:
     finally:
         fcntl.flock(lock_file, fcntl.LOCK_UN)
         lock_file.close()
-        lock_path.unlink(missing_ok=True)
+        try:
+            lock_path.unlink(missing_ok=True)
+        except OSError as exc:
+            # Removing a file needs write permission on the directory, and a
+            # sticky staging directory also requires owning the file. Failing
+            # here would turn a finished publish into a failed job over a file
+            # the next run can take over anyway.
+            log.warning(f"Could not remove the lock file {lock_path}: {exc}")
 
 
 def _lock_holder() -> str:

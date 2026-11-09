@@ -33,6 +33,8 @@ CHECKS = [
     ("check_ngff", "zarr group metadata rebuilt over suffixed mag paths"),
     ("check_conversion_errors", "a bad slice is located and explained"),
     ("check_delete_errors", "delete_layer timeout diagnostics"),
+    ("check_lock", "the per-dataset lock across users: takeover, refusal, cleanup"),
+    ("check_preflight", "staging and published-directory guards run before converting"),
     ("check_batch", "folder discovery and the batch submitter's list parsing"),
     ("check_layers", "adding a layer to an existing dataset, and refusing to orphan one"),
     ("check_legacy", "legacy datasets refused before conversion; --replace-legacy"),

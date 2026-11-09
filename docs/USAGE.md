@@ -827,6 +827,7 @@ Jobs are `--exclusive`: one dataset per node. Anything else in your environment
 | `WK_TOKEN` | — | API token (or `.config/auth_token.txt`) |
 | `WK_URL` | `https://webknossos.embl-hamburg.de` | server |
 | `WK_TEMP_BASE` | `/morningstar/tmp` | conversion staging — must be on the WEBKNOSSOS storage |
+| `WK_PUBLISHED_BASE` | `/morningstar/webknossos/.published/EMBL_Hamburg/.virtual` | checked for write access before converting; `''` turns the check off |
 | `WK_XIMG_TEAM` | `ximg` | facility-wide team added to every dataset |
 | `WK_MAX_CONVERSION_WORKERS` | `16` | worker ceiling; raise only if the storage gets faster |
 | `WK_TIMEOUT` | 1800 | client timeout in seconds; raise for very large layers |
@@ -879,10 +880,18 @@ How the work was split, and what bound it: `cores`, `memory`, `tasks`, `waves`
 or `requested` (your `--cpus`, or the default ceiling).
 
 ```
-Memory so far (conversion): largest worker 9.8 GiB, total 135.1 GiB ... actual is 1.06x that
+Memory so far (conversion): largest worker 9.8 GiB, total 135.1 GiB, 16 workers (1.06x plan)
 ```
-Measured against the plan. A final ratio near 1.0 means the sizing was right.
-Well above it triggers a warning — report it, the model is calibrated from these.
+One line every five minutes while a phase runs. It exists so a run that gets
+killed still leaves a reading behind — that is the number the sizing model is
+calibrated from.
+
+```
+Peak memory (conversion): largest worker 9.8 GiB … actual is 1.06x that
+```
+Once per phase, with the full breakdown beside it: CPU, worker states, threads.
+A ratio near 1.0 means the sizing was right. Well above it triggers a warning —
+report it, the model is calibrated from these.
 
 ```
 CPU (conversion): 7% of 176 cores busy on average
@@ -909,10 +918,15 @@ run never leaves a dataset without its layer. Re-running is always safe.
 | `No TIFF files found in …` | The reconstruction hasn't written its slices, or the filesystem is mounted but empty. |
 | `Cannot read the first slice: … (N bytes)` | The first TIFF is truncated or not a TIFF. Fix it and re-run. |
 | `Conversion failed: … slice N of M` | A slice is damaged. The message names the file; compare its size with its neighbours. |
+| `The published directory is not writable by you` | Your account cannot create the dataset directory the finished layer is renamed into. Ask its owner for group write (`chmod g+rwxs`) and check `id -nG`. Refused up front, so nothing is converted. |
+| `Cannot check the published directory before converting` | Advisory. The configured path is not present on this node, so the check was skipped — set `WK_PUBLISHED_BASE` if the storage is mounted elsewhere. |
 | `Staging directory does not exist: /morningstar/tmp` | morningstar is not mounted on this node. Use `WBK_NODE=bcrunch-n08`. |
 | `Found N datasets sharing a display name` | §5 — pick one and pass `--dataset-id`. |
 | `was published by the old system` | §5 — add `--replace-legacy`. |
 | `would create a NEW dataset containing only that layer` | You are adding a layer but no dataset was found. Pass `--dataset-id`, or `--new-dataset` if a standalone dataset really is intended. |
+| `Another run is already publishing '…'` | Someone is converting that dataset right now. The message names the host and SLURM job — check it with `squeue`. If that job is gone, the lock is stale: `rm` the file it names and re-run. |
+| `the lock file exists and is not writable by you` | A killed job left its lock behind and it predates the 0666 change. It names the owner and the `rm` command; if the staging directory is sticky, only that user or root can remove it. |
+| `Could not remove the lock file …` | Advisory, after a successful publish. The file is harmless and the next run takes it over. |
 | `Could not determine whether this dataset already exists` | The server was unreachable. It refuses rather than risk a duplicate. Check connectivity and re-run. |
 | `Tight memory fit: … planned against a … limit` | Advisory. Follow the `--max-memory` suggestion for a first run at that size. |
 | `Layer deletion timed out` | The server is still deleting; the data is not corrupt. Wait, then re-run with the `--dataset-id` it prints. |
@@ -921,7 +935,14 @@ run never leaves a dataset without its layer. Re-running is always safe.
 | `FAILED TO SUBMIT (line N)` | That one line of a batch was rejected by sbatch; the others were still submitted. The error follows it. |
 
 If a run dies mid-conversion, a directory is left under `/morningstar/tmp`;
-it is safe to delete.
+it is safe to delete. A killed job can also leave a `<dataset name>.lock` file
+there. That one is harmless — it is created writable by everyone, so the next
+run takes it over whoever submitted the job that died. Only a lock left by a job
+that is *still running* matters, and the file says which job that is:
+
+```bash
+cat /morningstar/tmp/<dataset name>.lock
+```
 
 ---
 
