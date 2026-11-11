@@ -245,7 +245,7 @@ def _conversion_message(exc: Exception, tiff_files: list[Path]) -> str:
     elif isinstance(exc, UnsupportedImageDataError):
         lines += [
             "The images were read, but cannot be stored as requested. Common causes:",
-            "  - float data being written into a segmentation layer (use --layer_type color)",
+            "  - float data being written into a segmentation layer (use --layer-type color)",
             "  - a multi-channel image, which webknossos 4.x converts into one layer",
             "    per channel and so refuses to add as a single layer",
             "This pipeline expects single-channel grayscale slices.",

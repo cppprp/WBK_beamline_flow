@@ -31,7 +31,7 @@ WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh /mnt/beegfs7/P14/2025/p3l-eduke/RECON/
 ```
 
 ```bash
-WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh --input_dir /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1 --voxel_size 325 --project cardiac_study
+WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh --stack /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1/stack --dataset-name 20250921_p3l-eduke_MA040_stitching_1 --voxel-size 325 --project cardiac_study
 ```
 
 Both take `--dry-run`, which reports what would happen — fresh upload or layer
@@ -387,7 +387,7 @@ shared code. Only the steps before conversion differ, in `zarr_input.py`:
   input yet; check the `Peak memory` line on the first large run.
 - **Multi-channel stores are refused without `--channel`.** One run publishes one
   layer, and webknossos refuses to add a multi-channel source as a single layer.
-- **`--voxel_size` stays authoritative.** An OME scale with known units is compared
+- **`--voxel-size` stays authoritative.** An OME scale with known units is compared
   with it and a mismatch is a warning, not an override.
 
 Batch lists take `manual: --zarr ...` lines like any other (USAGE §6). The scan
@@ -487,7 +487,7 @@ entry, so they never overwrite each other.
 run (and `--dry-run`) logs that the metadata was updated after the last publish and
 WEBKNOSSOS is behind.
 
-`--metadata-file` (beamline) or `--metadata_file` (manual) points at a different
+`--metadata-file` (beamline) or `--metadata-file` (manual) points at a different
 file, which is then both read for acquisition metadata and written with the
 publication record. Use it when the metadata lives somewhere other than
 `<sample>/meta_<run>.json`.

@@ -23,8 +23,9 @@
 # Manual/batch path:
 #
 #   WBK_MODULE=wbk_publish.manual ./wbk_publish_job.sh \
-#       --input_dir /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1 \
-#       --voxel_size 325 --project cardiac_study
+#       --stack /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1/stack \
+#       --dataset-name 20250921_p3l-eduke_MA040_stitching_1 \
+#       --voxel-size 325 --project cardiac_study
 #
 # Check a path before spending an allocation. A dry run converts nothing, but it
 # still goes through sbatch: the login node has neither the input filesystems nor
@@ -122,7 +123,7 @@ if [[ -z "${SLURM_JOB_ID:-}" && -z "${WBK_LOCAL:-}" ]]; then
         # Real publishes, one after another, on one exclusive node. The time
         # limit is the default unless SBATCH_ARGS raises it for a long batch.
         submit+=("--exclusive" "--job-name=wbk_sequence")
-    elif [[ " $* " == *" --dry-run "* || " $* " == *" --dry_run "* ]]; then
+    elif [[ " $* " == *" --dry-run "* ]]; then
         submit+=("--exclusive" "--time=00:15:00" "--job-name=wbk_dryrun")
     else
         submit+=("--exclusive")

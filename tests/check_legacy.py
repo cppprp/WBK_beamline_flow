@@ -32,7 +32,7 @@ def main() -> int:
 
     def request(**overrides):
         base = dict(
-            input_dir=input_dir, tiff_stack=stack,
+            input_dir=input_dir, record_key=input_dir.name, tiff_stack=stack,
             dataset_name="20250921_p3l-test_LEGACY_1", readable_name="LEGACY_1",
             folder_path="p3l-test/20250921", user_team="p3l-test",
             metadata_file=input_dir.parent / "meta_1.json",
@@ -102,7 +102,10 @@ def main() -> int:
 
     print("— the CLIs expose the flag")
     import wbk_publish.beamline as bl, wbk_publish.manual as mn
-    for mod, argv in ((bl, ["/x", "--voxel-size", "650"]), (mn, ["--input_dir", "/x"])):
+    for mod, argv in (
+        (bl, ["/x", "--voxel-size", "650"]),
+        (mn, ["--stack", "/x", "--dataset-name", "20250921_p3l-t_S_1"]),
+    ):
         import argparse
         parser = argparse.ArgumentParser()
         # Cheap way to prove the flag parses: the modules' own parsers are built

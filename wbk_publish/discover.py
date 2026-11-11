@@ -148,9 +148,9 @@ def build_list(root: Path, only: str | None, log: logging.Logger) -> list[str]:
             "# rather than the run — this scan cannot name the datasets, and the",
             "# lines have to say which dataset each stack belongs to:",
             "#",
-            "#   manual: --input_dir <the tomogram's run directory> \\",
-            "#           --stack_path <this stack> \\",
-            "#           --layer_name predictions --layer_type segmentation",
+            "#   manual: --stack <this stack> \\",
+            "#           --dataset-name <the tomogram's dataset name> \\",
+            "#           --layer-type segmentation",
             "#",
             "# See docs/USAGE.md section 6.",
         ]
@@ -262,11 +262,15 @@ def build_segmentation_list(
             lines.append("#          no subdirectory here holds TIFFs")
             continue
 
+        # The layer is named after the dataset and then the directory it came
+        # from, so `labels/` and `instances/` on the same dataset stay apart —
+        # which the type-derived default could not do.
+        readable = parse_dataset_name(name).readable_name
         lines.append(f"# {name}")
         for layer in layers:
             lines.append(
-                f"manual: --input_dir {run} --stack_path {layer} "
-                f"--layer_name {layer.name} --layer_type {layer_type}"
+                f"manual: --stack {layer} --dataset-name {name} "
+                f"--layer-name {readable}_{layer.name} --layer-type {layer_type}"
             )
             paired += 1
 

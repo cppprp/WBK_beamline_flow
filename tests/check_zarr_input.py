@@ -139,7 +139,7 @@ def main() -> int:
     check_zarr_input(info, None, (325, 325, 325), log)
     warned = [l for l in captured.lines if "OME metadata says" in l]
     r.ok("warned", bool(warned))
-    r.ok("and suggests the store's value", any("--voxel_size 650,650,650" in l for l in warned))
+    r.ok("and suggests the store's value", any("--voxel-size 650,650,650" in l for l in warned))
     captured.lines.clear()
     check_zarr_input(info, None, (650, 650, 650), log)
     r.ok("no warning when they agree", not any("OME metadata says" in l for l in captured.lines))
@@ -148,25 +148,29 @@ def main() -> int:
     pub.find_dataset_id_by_directory = lambda name, log: None
     pub.find_dataset_id_by_name = lambda names, log: None
     pub.is_virtual = lambda dataset_id, token, log: True
-    args = ["--zarr", str(single), "--sample_name", "20260115_p3l-test_ZARR_1",
-            "--voxel_size", "650", "--token", "dummy", "--dry-run"]
+    args = ["--zarr", str(single), "--dataset-name", "20260115_p3l-test_ZARR_1",
+            "--voxel-size", "650", "--token", "dummy", "--dry-run"]
     parser_args = manual_args(manual, args)
     request = manual.build_request(parser_args)
     r.eq("input is the store", request.tiff_stack, single)
-    r.eq("record keyed by the store", request.input_dir, single)
+    # No run directory to name, so the dataset name is the record key — unique
+    # by construction, which a store's filename is not.
+    r.eq("record keyed by the dataset name", request.record_key,
+         "20260115_p3l-test_ZARR_1")
+    r.ok("no input_dir is invented", request.input_dir is None)
     r.eq("metadata file beside the store", request.metadata_file, single.parent / "meta_1.json")
     r.eq("default layer name", request.layer_name, "ZARR_1_xray")
     r.eq("dry run exits 0", manual.main(args), 0)
     r.eq("multi-channel without --channel fails",
-         manual.main(["--zarr", str(multi), "--sample_name", "20260115_p3l-test_MULTI_1",
+         manual.main(["--zarr", str(multi), "--dataset-name", "20260115_p3l-test_MULTI_1",
                       "--token", "dummy", "--dry-run"]), 1)
     r.eq("...and with --channel succeeds",
-         manual.main(["--zarr", str(multi), "--channel", "2", "--sample_name",
+         manual.main(["--zarr", str(multi), "--channel", "2", "--dataset-name",
                       "20260115_p3l-test_MULTI_1", "--token", "dummy", "--dry-run"]), 0)
-    for bad, why in ((["--zarr", str(single), "--stack_path", str(single)], "--zarr with --stack_path"),
-                     ([], "neither --input_dir nor --zarr")):
+    for bad, why in ((["--zarr", str(single), "--stack", str(single)], "--zarr with --stack"),
+                     ([], "neither --stack nor --zarr")):
         try:
-            manual.build_request(manual_args(manual, bad + ["--sample_name",
+            manual.build_request(manual_args(manual, bad + ["--dataset-name",
                                  "20260115_p3l-test_ZARR_1", "--token", "dummy"]))
             r.ok(f"refused: {why}", False, "accepted")
         except ValueError:
@@ -210,8 +214,8 @@ def main() -> int:
     except ZarrInputError as exc:
         r.ok("float segmentation refused up front", "uint8" in str(exc))
     r.eq("...also through the CLI, before any conversion",
-         manual.main(["--zarr", str(float_store), "--sample_name", "20260115_p3l-test_FLOAT_1",
-                      "--layer_type", "segmentation", "--layer_name", "FLOAT_1_mask",
+         manual.main(["--zarr", str(float_store), "--dataset-name", "20260115_p3l-test_FLOAT_1",
+                      "--layer-type", "segmentation", "--layer-name", "FLOAT_1_mask",
                       "--new-dataset", "--token", "dummy", "--dry-run"]), 1)
     out = build_layer(bool_store, base / "out_bool", dataset_name="zarr_bool",
                       voxel_size_nm=(650, 650, 650), layer_name="mask", category="segmentation",

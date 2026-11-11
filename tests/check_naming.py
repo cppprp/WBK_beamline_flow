@@ -58,17 +58,51 @@ print("— the layer name shadows the dataset's readable name")
 # A layer called plainly 'xray' is ambiguous the moment it is seen outside its
 # dataset: in a link, a figure, or a dataset holding several layers.
 eq("recon layer", default_layer_name(parse_dataset_name(
-    dataset_name_from_path(recon)).readable_name), "MA040_1_xray")
+    dataset_name_from_path(recon)).readable_name, "color"), "MA040_1_xray")
 eq("stitch layer", default_layer_name(parse_dataset_name(
-    dataset_name_from_path(stitch)).readable_name), "tree_2x2x10_stitching_1_xray")
+    dataset_name_from_path(stitch)).readable_name, "color"),
+   "tree_2x2x10_stitching_1_xray")
+
+# A segmentation must not inherit the tomogram's word. It used to: the default
+# ignored the category, so a segmentation published with no explicit name became
+# MA040_1_xray and the orphan-layer guard waved it through, because that *was*
+# the default.
+eq("segmentation layer", default_layer_name("MA040_1", "segmentation"),
+   "MA040_1_segmentation")
 
 eq("recon stack", resolve_tiff_stack(recon).name, "tomo")
 eq("stitch stack", resolve_tiff_stack(stitch).name, "stack")
 
+print("— the account may be a proposal or a bare username")
+# Staff data is owned by a username with no p3l- prefix. Validation accepts it;
+# derivation can only *find* it by position, so the two differ in confidence.
+validate_dataset_name("20250826_kdenisova_NBG25_1")
+print("  ok   a bare username validates")
+
+eq("username found by position",
+   dataset_name_from_path(Path("/mnt/ximg/2025/kdenisova/RECON/20250826/NBG25/recon_111_1")),
+   "20250826_kdenisova_NBG25_1")
+# RECON sits between the account and the date under the beamline layout, so a
+# naive "component before the date" rule would pick RECON. It is skipped.
+eq("structural directories are skipped",
+   dataset_name_from_path(Path("/mnt/ximg/2025/kdenisova/20250826/NBG25/recon_111_1")),
+   "20250826_kdenisova_NBG25_1")
+# A p3l- component wins wherever it sits, which is what keeps every existing
+# path deriving exactly as before: two components before the date under RECON,
+# one before it in a prediction tree.
+eq("p3l- beats position (beamline layout)",
+   dataset_name_from_path(Path("/mnt/ximg/2025/p3l-eduke/RECON/20250826/NBG25/recon_111_1")),
+   "20250826_p3l-eduke_NBG25_1")
+eq("p3l- beats position (prediction tree)",
+   dataset_name_from_path(
+       Path("/mnt/ximg/preds/v2/unstandardized/p3l-eduke/20250826/NBG25/recon_111_1")),
+   "20250826_p3l-eduke_NBG25_1")
+
 for bad, why in [
-    (Path("/no/account/20250921/s/recon_1_1"), "no p3l"),
+    (Path("/RECON/20250921/s/recon_1_1"), "nothing but structural dirs before the date"),
     (Path("/x/p3l-a/RECON/notadate/s/recon_1_1"), "no date"),
     (Path("/x/p3l-a/RECON/20250921/s/whatever"), "no run dir"),
+    (Path("/x/kdenisova/RECON/20250921/s/whatever"), "no run dir, no p3l either"),
 ]:
     try:
         dataset_name_from_path(bad)
@@ -117,16 +151,16 @@ meta.write_text(json.dumps(mx_cube, indent=2))
 for stale in (recon / "dataset-metadata.json", recon.parent / "dataset-metadata.json"):
     stale.unlink(missing_ok=True)
 
-eq("nothing recorded yet", read_dataset_id(meta, recon, log), None)
-record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
+eq("nothing recorded yet", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), None)
+record_publication(meta, recon.name, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
                    layer_name="xray", log=log)
 data = json.loads(meta.read_text())
-eq("id read back", read_dataset_id(meta, recon, log), "abc123")
+eq("id read back", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), "abc123")
 eq("keyed by the input directory name", list(data["webknossos"]), ["recon_111_1"])
 eq("records the layer", list(data["webknossos"]["recon_111_1"]["layers"]), ["xray"])
 
 # A dataset can carry more than one layer, published by separate commands.
-record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
+record_publication(meta, recon.name, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
                    layer_name="predictions", log=log)
 layers = json.loads(meta.read_text())["webknossos"]["recon_111_1"]["layers"]
 eq("second layer added beside the first", sorted(layers), ["predictions", "xray"])
@@ -144,8 +178,8 @@ old["webknossos"]["recon_111_1"] = {
     "layer": "xray", "published_at": "2020-01-01T00:00:00+00:00",
 }
 meta.write_text(json.dumps(old, indent=2))
-eq("id readable from the pre-layers form", read_dataset_id(meta, recon, log), "abc123")
-record_publication(meta, recon, dataset_id="abc123", dataset_name="n",
+eq("id readable from the pre-layers form", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), "abc123")
+record_publication(meta, recon.name, dataset_id="abc123", dataset_name="n",
                    layer_name="predictions", log=log)
 migrated = json.loads(meta.read_text())["webknossos"]["recon_111_1"]
 eq("migrated to layers", sorted(migrated["layers"]), ["predictions", "xray"])
@@ -163,15 +197,15 @@ eq("display never carries our block", "webknossos" in to_display_metadata(data, 
 # A tiled scan: recon and stitching share the file, each with its own entry.
 tile_stitch = recon.parent / "stitching_1"
 tile_stitch.mkdir(exist_ok=True)
-record_publication(meta, tile_stitch, dataset_id="stitch9", dataset_name="x_stitching_1",
+record_publication(meta, tile_stitch.name, dataset_id="stitch9", dataset_name="x_stitching_1",
                    layer_name="xray", log=log)
 data = json.loads(meta.read_text())
 eq("second dataset keyed alongside", sorted(data["webknossos"]), ["recon_111_1", "stitching_1"])
-eq("first entry survives", read_dataset_id(meta, recon, log), "abc123")
-eq("second entry read by its own dir", read_dataset_id(meta, tile_stitch, log), "stitch9")
+eq("first entry survives", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), "abc123")
+eq("second entry read by its own dir", read_dataset_id(meta, tile_stitch.name, log, sidecar_dir=tile_stitch), "stitch9")
 
 # Re-publish: same id, entry replaced not duplicated.
-record_publication(meta, recon, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
+record_publication(meta, recon.name, dataset_id="abc123", dataset_name="20250921_p3l-eduke_MA040_1",
                    layer_name="xray", log=log)
 eq("re-publish keeps one entry", len(json.loads(meta.read_text())["webknossos"]), 2)
 
@@ -180,36 +214,36 @@ data = json.loads(meta.read_text())
 data["betadelta"] = 0.02
 data["last_updated"] = "2099-01-01T00:00:00Z"
 meta.write_text(json.dumps(data, indent=2))
-eq("id survives an edit", read_dataset_id(meta, recon, log), "abc123")
+eq("id survives an edit", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), "abc123")
 import io, logging
 buf = io.StringIO(); h = logging.StreamHandler(buf); log.addHandler(h)
-report_staleness(meta, recon, log)
+report_staleness(meta, recon.name, log)
 log.removeHandler(h)
 eq("staleness reported", "after the last publish" in buf.getvalue(), True)
 
 # A different instance's record is ignored.
 data["webknossos"]["recon_111_1"]["webknossos_url"] = "https://elsewhere.example"
 meta.write_text(json.dumps(data))
-eq("other instance ignored", read_dataset_id(meta, recon, log), None)
+eq("other instance ignored", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), None)
 
 # Legacy sidecar in the input directory is still honoured, never written.
 meta.write_text(json.dumps(mx_cube))
 (recon / "dataset-metadata.json").write_text(json.dumps({"dataset_id": "old777", "webknossos_url": "https://webknossos.embl-hamburg.de"}))
-eq("legacy sidecar read", read_dataset_id(meta, recon, log), "old777")
-record_publication(meta, recon, dataset_id="old777", dataset_name="n", layer_name="xray", log=log)
+eq("legacy sidecar read", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), "old777")
+record_publication(meta, recon.name, dataset_id="old777", dataset_name="n", layer_name="xray", log=log)
 eq("meta file now preferred", "old777" in meta.read_text(), True)
 (recon / "dataset-metadata.json").unlink()
 
 # Corrupt meta file: tolerated on read, never overwritten on write.
 meta.write_text("{ broken")
-eq("corrupt meta tolerated on read", read_dataset_id(meta, recon, log), None)
-eq("corrupt meta not overwritten", record_publication(meta, recon, dataset_id="x", dataset_name="n", layer_name="xray", log=log), None)
+eq("corrupt meta tolerated on read", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), None)
+eq("corrupt meta not overwritten", record_publication(meta, recon.name, dataset_id="x", dataset_name="n", layer_name="xray", log=log), None)
 eq("corrupt content intact", meta.read_text(), "{ broken")
 
 # No meta file at all (archive publish): created with only our block.
 meta.unlink()
-eq("missing meta tolerated", read_dataset_id(meta, recon, log), None)
-record_publication(meta, recon, dataset_id="new1", dataset_name="n", layer_name="xray", log=log)
+eq("missing meta tolerated", read_dataset_id(meta, recon.name, log, sidecar_dir=recon), None)
+record_publication(meta, recon.name, dataset_id="new1", dataset_name="n", layer_name="xray", log=log)
 eq("created with only our block", list(json.loads(meta.read_text())), ["webknossos"])
 meta.unlink()
 

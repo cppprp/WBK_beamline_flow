@@ -20,7 +20,7 @@ go wrong, an hour into a conversion:
   * the voxel size given on the command line is compared with the store's own
     OME scale when it has one and says what unit it is in. A disagreement is a
     warning, not an error — OME units are often missing or wrong — but it is the
-    one place a wrong `--voxel_size` (the default is 650 nm) would show up.
+    one place a wrong `--voxel-size` (the default is 650 nm) would show up.
 """
 
 import json
@@ -185,7 +185,7 @@ def conversion_dtype(info: ZarrInfo, category: str, log: logging.Logger) -> str 
             "integers.\n"
             "  Binary masks saved as float (0.0/1.0) should be re-saved as uint8.\n"
             "  Probabilities should be thresholded first, or published as a color "
-            "layer (--layer_type color)."
+            "layer (--layer-type color)."
         )
     return None
 
@@ -202,7 +202,7 @@ def check_zarr_input(
         raise ZarrInputError(
             f"{info.array_path} has {n} channels. One run publishes one layer, so "
             f"name the channel to publish: --channel 0 ... --channel {n - 1}.\n"
-            "To publish several, run once per channel with a different --layer_name."
+            "To publish several, run once per channel with a different --layer-name."
         )
     if channel is not None and not 0 <= channel < n:
         raise ZarrInputError(f"--channel {channel} does not exist; the store has {n} channel(s).")
@@ -212,11 +212,11 @@ def check_zarr_input(
         f"{info.dtype}" + (f", channel {channel} of {n}" if n > 1 else "")
     )
     if info.scale_nm is None:
-        log.info("  The store states no usable voxel size; using --voxel_size as given.")
+        log.info("  The store states no usable voxel size; using --voxel-size as given.")
     elif not all(math.isclose(a, b, rel_tol=0.01) for a, b in zip(info.scale_nm, voxel_size_nm)):
         log.warning(
-            f"--voxel_size is {voxel_size_nm} nm but the store's OME metadata says "
+            f"--voxel-size is {voxel_size_nm} nm but the store's OME metadata says "
             f"{tuple(round(s, 3) for s in info.scale_nm)} nm (x, y, z). Publishing with "
-            "--voxel_size. If the store is right, re-run with --voxel_size "
+            "--voxel-size. If the store is right, re-run with --voxel-size "
             + ",".join(f"{s:g}" for s in info.scale_nm)
         )

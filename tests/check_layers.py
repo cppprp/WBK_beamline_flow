@@ -41,7 +41,7 @@ def main() -> int:
 
     def request(**overrides):
         base = dict(
-            input_dir=input_dir, tiff_stack=stack,
+            input_dir=input_dir, record_key=input_dir.name, tiff_stack=stack,
             dataset_name="20250921_p3l-test_LAYERS_1", readable_name="LAYERS_1",
             folder_path="p3l-test/20250921", user_team="p3l-test",
             metadata_file=input_dir.parent / "meta_1.json",
@@ -50,10 +50,16 @@ def main() -> int:
         base.update(overrides)
         return PublishRequest(**base)
 
-    print("— the layer is named after the dataset, not after the modality")
+    print("— the layer is named after the dataset and the layer type")
     r.eq("default layer name", request().layer_name, "LAYERS_1_xray")
     r.eq("an explicit name is kept", request(layer_name="predictions").layer_name,
          "predictions")
+    # Before the type was part of the default, a segmentation published with no
+    # explicit name became LAYERS_1_xray — and the orphan guard below waved it
+    # through, because that *was* the default. A mislabelled segmentation with
+    # nothing to indicate it.
+    r.eq("a segmentation does not inherit the tomogram's word",
+         request(category="segmentation").layer_name, "LAYERS_1_segmentation")
 
     print("— the default layer publishes a new dataset without ceremony")
     found["id"] = None
@@ -73,7 +79,7 @@ def main() -> int:
         msg = str(exc)
         r.ok("raises", True)
         r.ok("names the layer", "'predictions'" in msg)
-        expected = default_layer_name("LAYERS_1")
+        expected = default_layer_name("LAYERS_1", "segmentation")
         r.ok(f"says there would be no {expected}", f"no '{expected}'" in msg)
         r.ok("says nothing was changed", "Nothing has been changed" in msg)
         r.ok("offers --dataset-id", "--dataset-id" in msg)
@@ -118,7 +124,8 @@ def main() -> int:
     import wbk_publish.manual as mn
     argparse.ArgumentParser.parse_args = spy
     try:
-        mn.main(["--input_dir", "/x", "--new-dataset", "--token", "t"])
+        mn.main(["--stack", "/x", "--dataset-name", "20250921_p3l-t_S_1",
+                 "--new-dataset", "--token", "t"])
     except SystemExit:
         pass
     finally:

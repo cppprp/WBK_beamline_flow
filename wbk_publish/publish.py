@@ -30,6 +30,8 @@ from webknossos import (
     DataFormat,
     RemoteAccessMode,
     RemoteDataset,
+    RemoteFolder,
+    Team,
     TransferMode,
     webknossos_context,
 )
@@ -60,18 +62,25 @@ from .metadata import (
 class PublishRequest:
     """Everything the pipeline needs. Both CLIs build one of these."""
 
-    input_dir: Path  # the recon/stitching directory
     tiff_stack: Path  # where the slices live — or a zarr store (zarr_input.py)
     dataset_name: str  # 20250921_p3l-eduke_MA040_1
     readable_name: str  # MA040_1 — shown in the WEBKNOSSOS UI
     folder_path: str  # relative to Datasets/, e.g. "p3l-eduke/20250921"
     user_team: str  # p3l-eduke
     metadata_file: Path  # meta_<run>.json
+    # Which entry of that file's `webknossos` block this publish owns. The
+    # beamline CLI uses the run directory's name, because one meta_<run>.json
+    # can describe both a recon and a stitching; the manual CLI has no run
+    # directory and uses the dataset name, which is unique by construction.
+    record_key: str
     voxel_size_nm: tuple[float, float, float]
     token: str
-    # None means "the default for this dataset": the readable name with the
-    # xray suffix, filled in below once readable_name is known. Both CLIs leave
-    # it unset for a tomogram and pass a name only for a further layer.
+    # The run directory, when there is one. Its only remaining job is locating a
+    # legacy dataset-metadata.json sidecar; the manual CLI leaves it None.
+    input_dir: Path | None = None
+    # None means "the default for this dataset": the readable name plus a word
+    # for the layer type. Both CLIs leave it unset for a tomogram and pass a
+    # name only for a further layer.
     layer_name: str | None = None
     category: str = "color"
     # Upper bounds, not targets — the actual worker count is derived from the
@@ -93,7 +102,7 @@ class PublishRequest:
 
     def __post_init__(self) -> None:
         if self.layer_name is None:
-            self.layer_name = default_layer_name(self.readable_name)
+            self.layer_name = default_layer_name(self.readable_name, self.category)
 
 
 def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | None:
@@ -130,10 +139,21 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
         # "add to an existing dataset", so make the operator say which one.
         if (
             dataset_id is None
-            and request.layer_name != default_layer_name(request.readable_name)
+            and request.layer_name != default_layer_name(
+                request.readable_name, request.category
+            )
             and not request.new_dataset
         ):
             raise RuntimeError(_orphan_layer_message(request))
+
+        # A fresh upload has to be filed somewhere, and creating the folder and
+        # the team needs WEBKNOSSOS rights an ordinary member may not have. Do
+        # it now: it used to happen as part of the upload, which meant a
+        # permission refusal arrived after the conversion and the pyramid and
+        # cost the whole run.
+        destination = None
+        if dataset_id is None:
+            destination = ensure_destination(request, log, create=not request.dry_run)
 
         if request.dry_run:
             _report_dry_run(request, dataset_id, plan, log)
@@ -142,7 +162,7 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
         raw_metadata = load_mx_cube_metadata(request.metadata_file, log)
 
         if dataset_id is None:
-            remote_ds = _fresh_upload(request, source, plan, log, dtype)
+            remote_ds = _fresh_upload(request, source, plan, log, dtype, destination)
         else:
             remote_ds = _overwrite_layer(request, source, plan, dataset_id, log, dtype)
 
@@ -150,14 +170,28 @@ def publish(request: PublishRequest, log: logging.Logger) -> RemoteDataset | Non
             attach_metadata(remote_ds, raw_metadata, log)
             resolved_id = remote_ds.dataset_id
 
-        record_publication(
-            request.metadata_file,
-            request.input_dir,
-            dataset_id=resolved_id,
-            dataset_name=request.dataset_name,
-            layer_name=request.layer_name,
-            log=log,
-        )
+        try:
+            record_publication(
+                request.metadata_file,
+                request.record_key,
+                dataset_id=resolved_id,
+                dataset_name=request.dataset_name,
+                layer_name=request.layer_name,
+                log=log,
+            )
+        except OSError as exc:
+            # The dataset is already live at this point, and the record is a
+            # convenience: a re-publish finds it by name anyway. Failing the job
+            # here would report a successful publish as a failure — and the
+            # likeliest cause is a stack in a directory that is not ours to
+            # write, which is nobody's mistake to pay for with a lost run.
+            log.error(
+                f"Published, but could not write the record: {exc}\n"
+                f"  dataset_id: {resolved_id}\n"
+                f"  wanted to write: {request.metadata_file}\n"
+                "  Note the id, or re-run with --metadata-file pointing somewhere "
+                "writable. Nothing about the dataset is wrong."
+            )
 
     log.info(f"Done: {WK_URL}/datasets/{resolved_id}")
     return remote_ds
@@ -183,6 +217,81 @@ def _resolve_source(request: PublishRequest, log: logging.Logger):
         else plan_for_stack(source, log, max_workers=request.max_workers, max_memory=request.max_memory)
     )
     return source, plan, dtype
+
+
+def ensure_destination(
+    request: PublishRequest, log: logging.Logger, *, create: bool = True
+) -> tuple[RemoteFolder, list[Team]] | None:
+    """Resolve the folder and teams a new dataset will be filed under.
+
+    Both can need creating, and both creations are privileged: `add_subfolder`
+    needs update access on the parent folder, `Team.add` is organisation
+    administration. An ordinary member account is refused — and because this
+    used to run as part of the upload, the refusal arrived after the conversion
+    and the pyramid were already done and threw them away.
+
+    With `create=False` (a dry run) nothing is created and nothing is checked
+    beyond existence: there is no way to test whether a create would be allowed
+    without doing it. So the dry run reports what is missing and says plainly
+    that it cannot vouch for the rights.
+    """
+    with webknossos_context(token=request.token, url=WK_URL):
+        if not create:
+            _report_destination(request, log)
+            return None
+        try:
+            folder = get_or_create_folder(request.folder_path, log)
+            teams = resolve_teams(request.user_team, log)
+        except Exception as exc:  # noqa: BLE001 - translated for the operator
+            raise RuntimeError(_destination_message(request, exc)) from exc
+    return folder, teams
+
+
+def _report_destination(request: PublishRequest, log: logging.Logger) -> None:
+    """Say which of the folder and team exist, for a dry run."""
+    folder_full = f"Datasets/{request.folder_path}"
+    try:
+        RemoteFolder.get_by_path(folder_full)
+        log.info(f"Folder exists: {folder_full}")
+        folder_missing = False
+    except Exception:  # noqa: BLE001 - absent is the thing we are reporting
+        log.info(f"Folder does NOT exist and would be created: {folder_full}")
+        folder_missing = True
+
+    try:
+        Team.get_by_name(request.user_team)
+        log.info(f"Team exists: {request.user_team}")
+        team_missing = False
+    except Exception:  # noqa: BLE001
+        log.info(f"Team does NOT exist and would be created: {request.user_team}")
+        team_missing = True
+
+    if folder_missing or team_missing:
+        log.warning(
+            "This dry run cannot tell you whether your account may create them — "
+            "there is no way to test that without doing it. Creating a folder needs "
+            "update access on Datasets; creating a team is an admin action. If the "
+            "real run stops with 'No update access', ask an admin to create "
+            f"'{folder_full}' and the team '{request.user_team}', or to grant your "
+            "account dataset-manager."
+        )
+
+
+def _destination_message(request: PublishRequest, exc: Exception) -> str:
+    return (
+        f"Could not prepare the destination for '{request.dataset_name}': {exc}\n"
+        "\n"
+        "Nothing has been converted. This is checked before the conversion on "
+        "purpose — it used to surface afterwards and cost the whole run.\n"
+        "\n"
+        f"  folder: Datasets/{request.folder_path}\n"
+        f"  team:   {request.user_team}\n"
+        "\n"
+        "A new account needs both, and creating them is privileged: a folder needs "
+        "update access on Datasets, a team is an admin action. Either ask an admin "
+        "to create those two once, or to give your account dataset-manager rights. "
+        "Pre-creating them is enough — this run only creates what is missing."
+    )
 
 
 def check_published_writable(log: logging.Logger) -> None:
@@ -293,7 +402,8 @@ def _orphan_layer_message(request: PublishRequest) -> str:
     return (
         f"No existing dataset was found, so publishing layer '{request.layer_name}' "
         f"now would create a NEW dataset containing only that layer —\n"
-        f"no '{default_layer_name(request.readable_name)}' beside it. That is almost "
+        f"no '{default_layer_name(request.readable_name, request.category)}' beside it. "
+        f"That is almost "
         "never what is wanted when the layer name is not this dataset's default.\n"
         "\n"
         "Nothing has been changed.\n"
@@ -335,9 +445,11 @@ def _resolve_dataset_id(request: PublishRequest, log: logging.Logger) -> str | N
         log.info(f"Using dataset id from the command line: {request.dataset_id}")
         return request.dataset_id
 
-    recorded = read_dataset_id(request.metadata_file, request.input_dir, log)
+    recorded = read_dataset_id(
+        request.metadata_file, request.record_key, log, sidecar_dir=request.input_dir
+    )
     if recorded:
-        report_staleness(request.metadata_file, request.input_dir, log)
+        report_staleness(request.metadata_file, request.record_key, log)
         return recorded
 
     log.info("No recorded dataset id — checking whether one exists by name")
@@ -361,8 +473,15 @@ def _fresh_upload(
     plan: WorkerPlan,
     log: logging.Logger,
     dtype: str | None = None,
+    destination: tuple[RemoteFolder, list[Team]] | None = None,
 ) -> RemoteDataset:
     log.info("No existing dataset — publishing a new one")
+    if destination is None:  # a direct caller that skipped publish()
+        with webknossos_context(token=request.token, url=WK_URL):
+            destination = (
+                get_or_create_folder(request.folder_path, log),
+                resolve_teams(request.user_team, log),
+            )
 
     with TemporaryDirectory(dir=TEMP_BASE, prefix=f"{request.dataset_name}.") as tmp:
         local_ds = build_layer(
@@ -384,10 +503,9 @@ def _fresh_upload(
         staged_metadata = capture_layer_metadata(Path(tmp), request.layer_name, log)
 
         with webknossos_context(token=request.token, url=WK_URL):
-            # Folder and teams must exist before the upload so they can be set
-            # as part of it, rather than patched on afterwards.
-            folder = get_or_create_folder(request.folder_path, log)
-            teams = resolve_teams(request.user_team, log)
+            # Resolved before the conversion by ensure_destination, so that a
+            # rights problem costs seconds rather than the whole run.
+            folder, teams = destination
 
             remote_ds = local_ds.upload(
                 new_dataset_name=request.dataset_name,
@@ -535,7 +653,7 @@ def _warn_about_legacy_layer(
         return
     if LEGACY_LAYER_NAME not in remote_ds.layers:
         return
-    if request.layer_name != default_layer_name(request.readable_name):
+    if request.layer_name != default_layer_name(request.readable_name, request.category):
         return
 
     log.warning(

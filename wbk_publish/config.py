@@ -41,17 +41,28 @@ PUBLISHED_BASE = Path(_published_base) if _published_base else None
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-# A layer is named after the dataset it belongs to, with this suffix: the
-# dataset 20250921_p3l-eduke_MA040_1 publishes its tomogram as the layer
-# MA040_1_xray. Shadowing the readable name means a layer identifies itself
-# wherever it is seen — in a dataset that has several, in a URL, in a figure —
-# which a bare 'xray' does not. See naming.default_layer_name.
-DEFAULT_LAYER_SUFFIX = "xray"
+# A layer is named after the dataset it belongs to, plus a word for what the
+# layer holds: 20250921_p3l-eduke_MA040_1 publishes its tomogram as the layer
+# MA040_1_xray and a segmentation of it as MA040_1_segmentation. Shadowing the
+# readable name means a layer identifies itself wherever it is seen — in a
+# dataset that has several, in a URL, in a figure — which a bare 'xray' does
+# not; including the type stops a segmentation inheriting the tomogram's word.
+# Keyed by the WEBKNOSSOS category, because that is what the CLI already takes.
+# 'color' maps to the modality rather than the category: a tomogram is an xray,
+# and 'MA040_1_color' would say nothing a reader cares about.
+LAYER_SUFFIXES = {"color": "xray", "segmentation": "segmentation"}
 
 # Publishes made before that convention named the layer plainly 'xray'. Still
 # recognised, so re-publishing such a dataset can say that the old layer is
 # still there rather than quietly leaving two copies of the same data.
 LEGACY_LAYER_NAME = "xray"
+
+# Directory names that organise a beamtime rather than name an account. Used
+# only when a path carries no p3l- component and the account has to be found by
+# position instead — see naming.dataset_name_from_path.
+STRUCTURAL_DIRS = frozenset(
+    {"recon", "proc", "processed", "postprocessed", "raw", "derived", "data", "results"}
+)
 
 DEFAULT_VOXEL_SIZE_NM = (650.0, 650.0, 650.0)
 

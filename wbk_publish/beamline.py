@@ -14,6 +14,7 @@ so URLs and existing annotations stay valid.
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -30,10 +31,10 @@ from .resources import parse_memory_size
 from .metadata import find_mx_cube_metadata
 
 
-def build_request(args: argparse.Namespace) -> PublishRequest:
+def build_request(args: argparse.Namespace, log: logging.Logger) -> PublishRequest:
     input_dir = Path(str(args.input_dir).rstrip("/"))
 
-    dataset_name = dataset_name_from_path(input_dir)
+    dataset_name = dataset_name_from_path(input_dir, log)
     validate_dataset_name(dataset_name)
     parts = parse_dataset_name(dataset_name)
 
@@ -41,6 +42,9 @@ def build_request(args: argparse.Namespace) -> PublishRequest:
 
     return PublishRequest(
         input_dir=input_dir,
+        # One meta_<run>.json can describe a recon and a stitching with the same
+        # run number, so the record is keyed by the directory, not the run.
+        record_key=input_dir.name,
         tiff_stack=resolve_tiff_stack(input_dir),
         dataset_name=dataset_name,
         readable_name=parts.readable_name,
@@ -130,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     log = make_logger("wbk_publish")
 
     try:
-        request = build_request(args)
+        request = build_request(args, log)
         log.info(f"Publishing {request.dataset_name}")
         publish(request, log)
         return 0

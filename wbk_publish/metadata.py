@@ -46,12 +46,22 @@ BLOCK_KEY = "webknossos"
 
 
 def find_mx_cube_metadata(
-    input_dir: Path, run_number: str, explicit: Path | None = None
+    base_dir: Path, run_number: str, explicit: Path | None = None
 ) -> Path:
-    """Locate meta_<run>.json in the sample directory, unless given explicitly."""
+    """Locate meta_<run>.json one level above `base_dir`, unless given explicitly.
+
+    The beamline CLI passes the run directory, so the file is looked for in the
+    sample directory beside it, which is where MX-Cube writes it. The manual CLI
+    passes the stack directory, so the file lands beside the stack — there is no
+    run directory there, and the publication record has to go somewhere the data
+    can be found from.
+
+    The path is returned whether or not it exists; callers treat an absent file
+    as "no acquisition metadata" and `record_publication` creates it.
+    """
     if explicit is not None:
         return explicit
-    return input_dir.parent / f"meta_{run_number}.json"
+    return base_dir.parent / f"meta_{run_number}.json"
 
 
 def _read_json(path: Path) -> dict | None:
@@ -95,22 +105,32 @@ def _id_for_this_instance(record: dict, source: str, log: logging.Logger) -> str
     return dataset_id
 
 
-def read_dataset_id(meta_file: Path, input_dir: Path, log: logging.Logger) -> str | None:
-    """The dataset previously published from `input_dir`, if recorded.
+def read_dataset_id(
+    meta_file: Path, key: str, log: logging.Logger, sidecar_dir: Path | None = None
+) -> str | None:
+    """The dataset previously published under `key`, if recorded.
 
-    Looks in meta_<run>.json first, then in the legacy sidecar. A missing or
-    corrupt file is not fatal: the caller falls back to a lookup by name.
+    `key` identifies the entry inside the file's `webknossos` block. The
+    beamline CLI uses the run directory's name, because one meta_<run>.json can
+    describe two runs — a recon and a stitching with the same run number both
+    resolve to meta_1.json. The manual CLI has no run directory to name and uses
+    the dataset name, which is unique by construction.
+
+    Looks in meta_<run>.json first, then in the legacy sidecar when a directory
+    to look in was given. A missing or corrupt file is not fatal: the caller
+    falls back to a lookup by name.
     """
     data = _read_json(meta_file)
-    record = (data or {}).get(BLOCK_KEY, {}).get(input_dir.name)
+    record = (data or {}).get(BLOCK_KEY, {}).get(key)
     if isinstance(record, dict):
         found = _id_for_this_instance(record, meta_file.name, log)
         if found:
             return found
 
-    legacy = _read_json(input_dir / LEGACY_SIDECAR_NAME)
-    if legacy:
-        return _id_for_this_instance(legacy, "legacy sidecar", log)
+    if sidecar_dir is not None:
+        legacy = _read_json(sidecar_dir / LEGACY_SIDECAR_NAME)
+        if legacy:
+            return _id_for_this_instance(legacy, "legacy sidecar", log)
     return None
 
 
@@ -136,7 +156,7 @@ def _last_published(record: dict) -> str | None:
     return max(times) if times else None
 
 
-def report_staleness(meta_file: Path, input_dir: Path, log: logging.Logger) -> None:
+def report_staleness(meta_file: Path, key: str, log: logging.Logger) -> None:
     """Say whether the metadata changed after the last publish.
 
     The recon tool stamps `last_updated` when it edits the file. Later than the
@@ -145,7 +165,7 @@ def report_staleness(meta_file: Path, input_dir: Path, log: logging.Logger) -> N
     older than the metadata is the thing worth saying.
     """
     data = _read_json(meta_file) or {}
-    record = data.get(BLOCK_KEY, {}).get(input_dir.name) or {}
+    record = data.get(BLOCK_KEY, {}).get(key) or {}
     updated, published = data.get("last_updated"), _last_published(record)
     if not (updated and published):
         return
@@ -202,14 +222,14 @@ def to_display_metadata(raw: dict, log: logging.Logger) -> dict:
 
 def record_publication(
     meta_file: Path,
-    input_dir: Path,
+    key: str,
     *,
     dataset_id: str,
     dataset_name: str,
     layer_name: str,
     log: logging.Logger,
 ) -> Path | None:
-    """Set this directory's entry in the file's `webknossos` block.
+    """Set `key`'s entry in the file's `webknossos` block.
 
     The file is re-read here rather than reusing what was loaded before the
     conversion: on a long run the recon tool may have edited it in between,
@@ -223,7 +243,7 @@ def record_publication(
         if data is None:
             log.error(
                 f"{meta_file} is not a JSON object; not recording the publication in it.\n"
-                f"  Published: dataset_id={dataset_id} for {input_dir.name}\n"
+                f"  Published: dataset_id={dataset_id} for {key}\n"
                 "  Fix the file, then add the id under its \"webknossos\" key, or pass\n"
                 "  --dataset-id on the next run."
             )
@@ -237,11 +257,11 @@ def record_publication(
         block = data[BLOCK_KEY] = {}
     # Keep the other layers' entries: a dataset may hold a tomogram and a
     # segmentation of it, published at different times by different commands.
-    record = block.get(input_dir.name)
+    record = block.get(key)
     layers = _layers_of(record) if isinstance(record, dict) else {}
     layers[layer_name] = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
-    block[input_dir.name] = {
+    block[key] = {
         "dataset_id": dataset_id,
         "dataset_name": dataset_name,
         "webknossos_url": WK_URL,
@@ -253,5 +273,5 @@ def record_publication(
     tmp_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     tmp_path.replace(meta_file)
 
-    log.info(f"Publication recorded in {meta_file} under '{input_dir.name}'")
+    log.info(f"Publication recorded in {meta_file} under '{key}'")
     return meta_file

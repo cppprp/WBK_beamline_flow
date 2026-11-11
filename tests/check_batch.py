@@ -150,11 +150,16 @@ def main() -> int:
          "# 20260615_p3l-doejw_MB012_1" in body)
     r.ok("a stitching's prediction names the stitching dataset",
          "# 20260615_p3l-doejw_MB014_stitching_1" in body)
-    r.ok("every line points --input_dir at the prediction run directory",
-         all("--input_dir" in ln and "/recon_" in ln or "/stitching_" in ln for ln in lines))
-    r.ok("the layer is named after its directory",
-         any("--layer_name instances" in ln for ln in lines))
-    r.ok("and typed", all("--layer_type segmentation" in ln for ln in lines))
+    r.ok("every line points --stack at the prediction stack",
+         all("--stack " in ln and ("/labels" in ln or "/instances" in ln) for ln in lines))
+    r.ok("and names the dataset it attaches to",
+         all("--dataset-name 20260615_p3l-doejw_" in ln for ln in lines))
+    # The dataset name is an exact lookup on the directory name, so a line needs
+    # neither a recorded id nor --dataset-id to find the right dataset.
+    r.ok("so it needs no --dataset-id", all("--dataset-id" not in ln for ln in lines))
+    r.ok("the layer shadows the dataset and the directory it came from",
+         any("--layer-name MB013_1_instances" in ln for ln in lines))
+    r.ok("and typed", all("--layer-type segmentation" in ln for ln in lines))
     r.ok("a run with nothing written is skipped with a reason",
          "no subdirectory here holds TIFFs" in body)
 
@@ -181,9 +186,11 @@ def main() -> int:
         "\n"
         "/data/MB012/stitching_1\n"
         "/data/MB014/recon_111_1  --voxel-size 325\n"
-        "manual: --input_dir /data/MB012/stitching_1 \\\n"
-        "        --layer_name predictions --layer_type segmentation\n"
-        "manual: --zarr /data/exports/MA040.zarr --sample_name 20260115_p3l-test_MA040_1\n"
+        "manual: --stack /data/preds/MB012/labels \\\n"
+        "        --dataset-name 20260615_p3l-doejw_MB012_stitching_1 \\\n"
+        "        --layer-name MB012_stitching_1_labels --layer-type segmentation\n"
+        "manual: --zarr /data/exports/MA040.zarr "
+        "--dataset-name 20260115_p3l-test_MA040_1\n"
     )
     out = subprocess.run(
         [str(REPO_ROOT / "wbk_batch.sh"), str(list_file), "--voxel-size", "650", "--check"],
@@ -199,7 +206,8 @@ def main() -> int:
          submissions[2].startswith("WBK_MODULE=wbk_publish.manual"))
     r.ok("the manual: prefix is not passed on", "manual:" not in submissions[2].split("job.sh")[1])
     r.ok("continuation joined into one submission",
-         "--layer_name predictions" in submissions[2] and "--input_dir" in submissions[2])
+         "--layer-name MB012_stitching_1_labels" in submissions[2]
+         and "--stack" in submissions[2])
     r.ok("a --zarr line goes to the manual CLI as written",
          submissions[3].startswith("WBK_MODULE=wbk_publish.manual")
          and "--zarr /data/exports/MA040.zarr" in submissions[3])
@@ -287,7 +295,7 @@ def main() -> int:
     lines = order.read_text().split() if order.exists() else []
     r.eq("ran before and after the failing line, in order", lines, ["first", "third"])
 
-    print("— the manual CLI accepts both flag spellings, so common args work for it")
+    print("— the manual CLI takes one input path and a required dataset name")
     import argparse
 
     import wbk_publish.manual as mn
@@ -300,13 +308,17 @@ def main() -> int:
 
     argparse.ArgumentParser.parse_args = spy
     try:
-        mn.main(["--input-dir", "/x", "--voxel-size", "650", "--token", "t"])
+        mn.main(["--stack", "/x", "--dataset-name", "20250921_p3l-t_S_1",
+                 "--voxel-size", "650", "--token", "t"])
     except SystemExit:
         pass
     finally:
         argparse.ArgumentParser.parse_args = orig
-    r.eq("hyphenated --input-dir", str(seen.get("input_dir")), "/x")
-    r.eq("hyphenated --voxel-size", seen.get("voxel_size"), (650.0, 650.0, 650.0))
+    r.eq("--stack", str(seen.get("stack")), "/x")
+    r.eq("--dataset-name", seen.get("dataset_name"), "20250921_p3l-t_S_1")
+    r.eq("--voxel-size", seen.get("voxel_size"), (650.0, 650.0, 650.0))
+    r.ok("no --input-dir any more", "input_dir" not in seen)
+    r.ok("no --stack-path any more", "stack_path" not in seen)
 
     return r.finish("BATCH CHECKS PASSED")
 

@@ -2,42 +2,44 @@
 
 Same pipeline as the automatic beamline CLI, but everything the beamline path
 fixes is adjustable here: layer name, layer type, voxel size, project folder,
-and the dataset name itself for archive data that predates the naming
-convention.
+and the dataset name, which is required rather than derived.
 
-    python -m wbk_publish.manual --input_dir /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1 \
-        --voxel_size 325,325,325 --project cardiac_study
+    python -m wbk_publish.manual --stack /mnt/ximg/2025/p3l-eduke/RECON/20250921/MA040/stitching_1/stack \
+        --dataset-name 20250921_p3l-eduke_MA040_stitching_1 \
+        --voxel-size 325 --project cardiac_study
 
-    python -m wbk_publish.manual --input_dir /archive/2019/batch_5 \
-        --stack_path /archive/2019/batch_5/tiffs \
-        --sample_name 20190501_p3l-archive_exp5_1 \
-        --layer_type segmentation --layer_name predictions --new-dataset
+    python -m wbk_publish.manual --stack /mnt/ximg/2026/preds/MA040/labels \
+        --dataset-name 20250921_p3l-eduke_MA040_stitching_1 \
+        --voxel-size 325 --layer-type segmentation
 
     python -m wbk_publish.manual --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr \
-        --sample_name 20260115_p3l-eduke_MA040_1 --voxel_size 650
+        --dataset-name 20260115_p3l-eduke_MA040_1 --voxel-size 650
+
+Two arguments carry it: --stack (or --zarr) says where the data is, and
+--dataset-name says which dataset it belongs to. There is no second path to
+give. The name is not optional, because for the archive and postprocessing
+trees this CLI exists to serve, nothing reliable can be derived from the path —
+and the name is also what finds an existing dataset, by an exact lookup on its
+directory name, so a further layer needs neither a recorded id nor --dataset-id.
+
+The publication record goes beside the stack as meta_<run>.json unless
+--metadata-file says otherwise. Losing that write does not fail the publish; the
+id is logged instead.
 
 A zarr store (plain array or OME-Zarr, v2 or v3) is accepted in place of a TIFF
-stack with --zarr. It may sit anywhere, so its name comes from --sample_name;
---input_dir defaults to the store itself and only decides where the dataset id
-is recorded (meta_<run>.json beside it). A store with several channels needs
---channel.
+stack with --zarr. A store with several channels needs --channel.
 
-Like the beamline CLI, re-running on the same input replaces that layer on the
-dataset published before and keeps the dataset id.
+Like the beamline CLI, re-running on the same dataset name replaces that layer
+on the dataset published before and keeps the dataset id.
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from .config import DEFAULT_LAYER_SUFFIX, get_auth_token
+from .config import LAYER_SUFFIXES, get_auth_token
 from .logs import make_logger
-from .naming import (
-    dataset_name_from_path,
-    parse_dataset_name,
-    resolve_tiff_stack,
-    validate_dataset_name,
-)
+from .naming import parse_dataset_name, validate_dataset_name
 from .publish import PublishRequest, publish
 from .resources import parse_memory_size
 from .metadata import find_mx_cube_metadata
@@ -65,53 +67,30 @@ def parse_voxel_size(value: str) -> tuple[float, float, float]:
 
 
 def build_request(args: argparse.Namespace) -> PublishRequest:
-    if args.zarr and args.stack_path:
-        raise ValueError("--zarr and --stack_path both name the input; give one.")
-    if args.input_dir is None and not args.zarr:
-        raise ValueError("--input_dir is required (it may only be left out with --zarr).")
-    # For a zarr the store itself is the natural record key: the dataset id is
-    # written to meta_<run>.json beside it, so a re-run updates the same dataset.
-    input_dir = Path(str(args.input_dir or args.zarr).rstrip("/"))
+    if args.zarr and args.stack:
+        raise ValueError("--stack and --zarr both name the input; give one.")
+    if not args.zarr and not args.stack:
+        raise ValueError("--stack is required (or --zarr for a zarr store).")
 
-    # An explicit name is the escape hatch for paths that do not follow the
-    # beamline layout; otherwise derive it the same way the beamline CLI does.
-    if args.sample_name:
-        dataset_name = args.sample_name
-    else:
-        try:
-            dataset_name = dataset_name_from_path(input_dir)
-        except ValueError as exc:
-            # Most often this is someone pointing --input_dir at a directory
-            # that is not a run directory — a segmentation output, say. The
-            # derivation cannot work there, but --sample_name makes it moot.
-            raise ValueError(
-                f"{exc}\n"
-                "  Pass --sample_name to state the dataset name yourself, in the\n"
-                "  form YYYYMMDD_p3l-account_SAMPLE_RUN. That is what it is for:\n"
-                "  --input_dir only has to follow the beamline layout when the\n"
-                "  name is being derived from it."
-            ) from exc
+    stack_path = Path(str(args.stack or args.zarr).rstrip("/"))
+    dataset_name = args.dataset_name
     validate_dataset_name(dataset_name)
     parts = parse_dataset_name(dataset_name)
-
-    if args.zarr:
-        stack_path = Path(str(args.zarr).rstrip("/"))
-    elif args.stack_path:
-        stack_path = Path(args.stack_path)
-    else:
-        stack_path = resolve_tiff_stack(input_dir)
 
     folder_path = f"{parts.user}/{args.project}" if args.project else parts.user
 
     return PublishRequest(
-        input_dir=input_dir,
         tiff_stack=stack_path,
         dataset_name=dataset_name,
         readable_name=parts.readable_name,
+        # No run directory here, so the dataset name is the record key. It is
+        # unique by construction, which the stack's directory name is not —
+        # every prediction tree in the world has a directory called 'labels'.
+        record_key=dataset_name,
         folder_path=folder_path,
         user_team=parts.user,
         metadata_file=find_mx_cube_metadata(
-            input_dir,
+            stack_path,
             parts.run_number,
             explicit=Path(args.metadata_file) if args.metadata_file else None,
         ),
@@ -137,25 +116,18 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    # Both spellings are accepted for every flag. The underscore forms came
-    # first and existing triggers use them; the hyphenated ones match the
-    # beamline CLI, so a batch can apply one set of common arguments to lines
-    # of either kind.
+    # Hyphens throughout, matching the beamline CLI, so one set of common
+    # arguments applies to every line of a batch whichever CLI it routes to.
     parser.add_argument(
-        "--input_dir", "--input-dir",
+        "--stack",
         type=Path,
-        help="The recon or stitching directory. Its name keys the publication record in the "
-        "metadata file. Required, except with --zarr, where it defaults to the store.",
-    )
-    parser.add_argument(
-        "--stack_path", "--stack-path",
-        help="Directory holding the TIFF slices. Derived from --input_dir when omitted.",
+        help="Directory holding the TIFF slices. Required, unless --zarr is given.",
     )
     parser.add_argument(
         "--zarr",
         type=Path,
-        help="Publish this zarr store (plain array or OME-Zarr, v2 or v3) instead of a TIFF "
-        "stack. Needs --sample_name unless --input_dir follows the beamline layout.",
+        help="Publish this zarr store (plain array or OME-Zarr, v2 or v3) instead of a "
+        "TIFF stack.",
     )
     parser.add_argument(
         "--channel",
@@ -163,11 +135,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Channel of a multi-channel zarr to publish (0-based). Required when it has several.",
     )
     parser.add_argument(
-        "--sample_name", "--sample-name",
-        help="Dataset name (YYYYMMDD_p3l-account_SAMPLE_RUN). Derived from the path when omitted.",
+        "--dataset-name",
+        required=True,
+        help="Dataset name, YYYYMMDD_account_SAMPLE_RUN. The account may be a proposal "
+        "(p3l-eduke) or a username (jdoe). Also what finds an existing dataset, so a "
+        "further layer needs nothing else to attach itself to the right one.",
     )
     parser.add_argument(
-        "--voxel_size", "--voxel-size",
+        "--voxel-size",
         type=parse_voxel_size,
         default="650,650,650",
         help="Voxel size in nm, '650' or '650,650,650' (default: 650,650,650)",
@@ -180,7 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         "derived from the stack size and the machine's CPU and memory allocation.",
     )
     parser.add_argument(
-        "--max-memory", "--max_memory",
+        "--max-memory",
         type=parse_memory_size,
         default=None,
         help="Memory this run may use, e.g. '400G'. Read from SLURM or the machine "
@@ -191,25 +166,25 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional subfolder under the account, e.g. Datasets/p3l-eduke/<project>",
     )
     parser.add_argument(
-        "--layer_name", "--layer-name",
+        "--layer-name",
         default=None,
-        help="Name of the layer to write. Defaults to the dataset's readable name "
-             f"followed by '_{DEFAULT_LAYER_SUFFIX}', so MA040_1 publishes as "
-             f"MA040_1_{DEFAULT_LAYER_SUFFIX}. Give a name only for a further layer, "
-             "such as a segmentation.",
+        help="Name of the layer to write. Defaults to the dataset's readable name plus "
+             f"the layer type, so MA040_1 publishes as MA040_1_{LAYER_SUFFIXES['color']} "
+             f"and its segmentation as MA040_1_{LAYER_SUFFIXES['segmentation']}.",
     )
     parser.add_argument(
-        "--layer_type", "--layer-type",
-        choices=["color", "segmentation"],
+        "--layer-type",
+        choices=sorted(LAYER_SUFFIXES),
         default="color",
         help="Layer category (default: color)",
     )
     parser.add_argument(
-        "--metadata_file", "--metadata-file",
-        help="MX-Cube metadata JSON. Defaults to meta_<run>.json beside the sample directory.",
+        "--metadata-file",
+        help="MX-Cube metadata JSON, and where the publication record is written. "
+        "Defaults to meta_<run>.json beside the stack.",
     )
     parser.add_argument(
-        "--sampling_mode", "--sampling-mode",
+        "--sampling-mode",
         choices=["anisotropic", "isotropic", "constant_z"],
         default="anisotropic",
         help="Downsampling scheme for the magnification pyramid (default: anisotropic)",
@@ -219,17 +194,17 @@ def main(argv: list[str] | None = None) -> int:
         help="WEBKNOSSOS API token. Defaults to $WK_TOKEN, then .config/auth_token.txt",
     )
     parser.add_argument(
-        "--dataset-id", "--dataset_id",
+        "--dataset-id",
         help="Overwrite this specific dataset, skipping the recorded id and the name lookup",
     )
     parser.add_argument(
-        "--replace-legacy", "--replace_legacy",
+        "--replace-legacy",
         action="store_true",
         help="If the matched dataset was published by the old system and cannot be "
         "updated in place, publish a new dataset alongside it instead of refusing",
     )
     parser.add_argument(
-        "--new-dataset", "--new_dataset",
+        "--new-dataset",
         action="store_true",
         help="Confirm that a layer named something other than the default should "
              "start a NEW dataset. Without it, publishing a non-default layer when "
@@ -237,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
              "layer orphaned in a dataset of its own.",
     )
     parser.add_argument(
-        "--dry-run", "--dry_run",
+        "--dry-run",
         action="store_true",
         help="Report what would happen without converting or transferring anything",
     )

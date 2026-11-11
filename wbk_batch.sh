@@ -27,15 +27,15 @@
 #   /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB014/recon_111_1  --voxel-size 325
 #
 #   # segmentations, using the manual CLI — prefix the line with 'manual:'
-#   manual: --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/stitching_1 \
-#           --stack_path /mnt/bigjbod6/2026/p3l-doejw/SEG/MB012/labels \
-#           --layer_name predictions --layer_type segmentation
+#   manual: --stack /mnt/bigjbod6/2026/p3l-doejw/SEG/MB012/labels \
+#           --dataset-name 20260615_p3l-doejw_MB012_stitching_1 \
+#           --layer-name MB012_stitching_1_labels --layer-type segmentation
 #
 # Per-line arguments come after the common ones, so they win. Blank lines and
 # lines starting with # are ignored. A trailing \ continues a line.
 #
-# Segmentations do not need --dataset-id: with --input_dir pointing at the run
-# directory, the id is read from that run's record in meta_<run>.json.
+# Segmentations do not need --dataset-id: --dataset-name is an exact lookup on
+# the dataset's directory name, so the layer finds its dataset by name alone.
 #
 # OPTIONS
 #   --scan DIR      submit a discovery job that writes a list, then stop
@@ -98,7 +98,7 @@ common=()
 for arg in "$@"; do
     case "$arg" in
         --check)      CHECK=1 ;;
-        --dry-run|--dry_run) DRYRUN=1; common+=("$arg") ;;
+        --dry-run) DRYRUN=1; common+=("$arg") ;;
         --sequential) SEQUENTIAL=1 ;;
         *)            common+=("$arg") ;;
     esac
@@ -151,7 +151,7 @@ submit_line() {
     local label="${args[0]}"
     local i
     for ((i = 0; i < ${#args[@]} - 1; i++)); do
-        if [[ "${args[i]}" == "--input_dir" || "${args[i]}" == "--input-dir" || "${args[i]}" == "--zarr" ]]; then
+        if [[ "${args[i]}" == "--stack" || "${args[i]}" == "--zarr" ]]; then
             label="${args[i + 1]}"
             break
         fi

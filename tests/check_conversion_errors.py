@@ -64,7 +64,7 @@ def main() -> int:
 
     print("— unsupported data explains the usual causes")
     msg = _conversion_message(UnsupportedImageDataError("float into segmentation"), tiffs)
-    r.ok("mentions the segmentation case", "--layer_type color" in msg)
+    r.ok("mentions the segmentation case", "--layer-type color" in msg)
     r.ok("mentions the multi-channel case", "multi-channel" in msg)
     r.ok("tolerates a missing path", "None" not in msg.splitlines()[1])
 

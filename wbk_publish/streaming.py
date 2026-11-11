@@ -30,7 +30,7 @@ to `zarr3`; our server still wants the old name, and this keeps working across
 that upgrade.
 
     ./wbk_publish/streaming.py <datasetId>
-    ./wbk_publish/streaming.py <datasetId> --layer xray --expires-in-days 90
+    ./wbk_publish/streaming.py <datasetId> --expires-in-days 90
     ./wbk_publish/streaming.py --annotation <annotationId>
 
 Anyone holding the printed URL can read the data until the link is deleted!
@@ -187,7 +187,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("dataset_id", nargs="?", help="Dataset id (see the webknossos block in meta_<run>.json)")
     parser.add_argument("--annotation", help="Use this annotation instead of making one")
-    parser.add_argument("--layer", help="Only print this layer's URL", default="xray")
+    parser.add_argument(
+        "--layer",
+        help="Only print this layer's URL. Every layer is printed when omitted; the "
+        "names come from the link itself, so there is nothing to guess.",
+    )
     parser.add_argument(
         "--new", action="store_true", help="Mint a fresh link instead of reusing yours"
     )

@@ -72,7 +72,7 @@ tail -f logs/wbk_<jobid>.log
 **Check before committing an allocation** — this converts nothing:
 
 ```bash
-WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh <input_dir> --voxel-size 650 --dry-run
+WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh <run_dir> --voxel-size 650 --dry-run
 ```
 
 It is submitted like any other job, but with a 15-minute limit instead of eight
@@ -111,6 +111,7 @@ For data in the standard tree. This is the default, so you don't name a module.
 | folder | `Datasets/<account>/<date>` |
 | teams | your p3l account team, plus `ximg` |
 | layer | always `<readable name>_xray`, always colour |
+| account | the `p3l-` directory in the path |
 
 None of these can be overridden here — that's the point. A trigger firing with a
 wrong argument must not be able to publish a mislabelled dataset. If you need to
@@ -128,10 +129,24 @@ change any of them, use the manual CLI.
   folder         Datasets/p3l-doejw/20260615
 ```
 
-**The layer is named after the dataset**, with `_xray` after it. A layer that
-carries the sample name says what it is on its own — in a dataset that has
-several layers, in a link someone sends you, in a figure panel — where a layer
-called plainly `xray` only says which modality it was.
+**The layer is named after the dataset**, then what it holds: `_xray` for a
+tomogram, `_segmentation` for labels. A layer that carries the sample name says
+what it is on its own — in a dataset that has several layers, in a link someone
+sends you, in a figure panel — where a layer called plainly `xray` only says
+which modality it was. The type has to be in there too, or a segmentation
+published without an explicit name inherits the tomogram's word.
+
+**The account may be a bare username.** `p3l-` marks a proposal account and is
+matched wherever it sits in the path. A path without one — staff data under
+`/mnt/ximg/2025/jdoe/...` — takes the nearest directory before the date that is
+not a structural name like `RECON`, and says so in the log:
+
+```
+Account taken by position (no p3l- component in the path): jdoe
+```
+
+Read that line when you see it. An account name becomes the team name, and the
+team decides who can open the dataset.
 
 A `recon_XYZ_N` run contributes only its trailing number. A `stitching_N` is kept
 whole:
@@ -146,10 +161,10 @@ whole:
 ### The command
 
 ```bash
-WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh <input_dir> --voxel-size <325|650>
+WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh <run_dir> --voxel-size <325|650>
 ```
 
-`<input_dir>` is the **run** directory — the one containing `tomo/` or `stack/`,
+`<run_dir>` is the **run** directory — the one containing `tomo/` or `stack/`,
 not the `tomo/` directory itself.
 
 ### Options
@@ -272,33 +287,40 @@ SBATCH_ARGS="--time=24:00:00" WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 For everything the beamline path can't express. Same pipeline, same id-preserving
 behaviour — but you state what the beamline CLI would have derived.
 
-Set `WBK_MODULE=wbk_publish.manual` and note the **underscores**: this CLI uses
-`--voxel_size`, `--input_dir`, `--metadata_file`, where the beamline one uses
-hyphens.
+Set `WBK_MODULE=wbk_publish.manual`. Every flag is hyphenated, here and on the
+beamline CLI, so one set of common arguments serves a batch of either kind.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir <dir> [options]
+    --stack <dir> --dataset-name <name> [options]
 ```
 
-Only `--input_dir` is required. Everything else falls back to the same defaults
-the beamline CLI uses.
+**Two arguments carry it.** `--stack` says where the TIFFs are — the directory
+holding the `.tif` files themselves, not a run directory above them. And
+`--dataset-name` says which dataset they belong to. There is no second path to
+give and nothing is derived from the path.
+
+The name is required because this CLI exists for the trees where nothing
+reliable *can* be derived — archive layouts, postprocessing output, stitchings
+whose directory carries no run number. It is also what finds an existing
+dataset: an exact lookup on the dataset's directory name, which is unique by
+construction. That is why adding a layer needs neither a recorded id nor
+`--dataset-id`.
 
 ### Options
 
 | flag | default | what it does |
 |---|---|---|
-| `--input_dir DIR` | **required** (with `--zarr`: the store) | the run directory; its name keys the record in the metadata file |
-| `--stack_path DIR` | `<input_dir>/tomo` or `/stack` | where the TIFFs actually are |
-| `--zarr PATH` | — | publish a zarr store instead of TIFFs (§5, example 10) |
+| `--stack DIR` | **required** (or `--zarr`) | the directory holding the TIFF slices |
+| `--dataset-name NAME` | **required** | `YYYYMMDD_account_SAMPLE_RUN`; also finds an existing dataset |
+| `--zarr PATH` | — | publish a zarr store instead of TIFFs (example 10) |
 | `--channel N` | — | which channel of a multi-channel zarr to publish, 0-based |
-| `--sample_name NAME` | derived from the path | the dataset name, `YYYYMMDD_p3l-account_SAMPLE_RUN` |
-| `--voxel_size` | `650,650,650` | `650`, or `x,y,z` in nm |
+| `--voxel-size` | `650,650,650` | `650`, or `x,y,z` in nm |
 | `--project NAME` | none — straight under the account | subfolder under the account |
-| `--layer_name NAME` | `<readable name>_xray` | which layer to write |
-| `--layer_type` | `color` | `color` or `segmentation` |
-| `--sampling_mode` | `anisotropic` | `anisotropic`, `isotropic`, `constant_z` |
-| `--metadata_file PATH` | `<sample>/meta_<run>.json` | read metadata from, and record the publication in |
+| `--layer-name NAME` | `<readable name>_<type>` | which layer to write |
+| `--layer-type` | `color` | `color` or `segmentation` |
+| `--sampling-mode` | `anisotropic` | `anisotropic`, `isotropic`, `constant_z` |
+| `--metadata-file PATH` | `meta_<run>.json` beside the stack | read metadata from, and record the publication in |
 | `--jobs N` | automatic | upper bound on workers |
 | `--max-memory 400G` | from SLURM | memory this run may use |
 | `--dataset-id ID` | looked up | overwrite exactly this dataset |
@@ -319,12 +341,14 @@ Use when a study spans several beamtimes and you want the datasets together.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/ximg/2026/p3l-schmidt/RECON/20260830/LN_2x2x4/stitching_1 \
-    --voxel_size 650 \
+    --stack /mnt/ximg/2026/p3l-schmidt/RECON/20260830/LN_2x2x4/stitching_1/stack \
+    --dataset-name 20260830_p3l-schmidt_LN_2x2x4_stitching_1 \
+    --voxel-size 650 \
     --project lymph_node_atlas
 ```
 
-*Change:* `--input_dir` to your directory, `--project` to your folder name.
+*Change:* `--stack` to your slice directory, `--dataset-name` to match it,
+`--project` to your folder name.
 *Result:* published as `LN_2x2x4_stitching_1` into
 `Datasets/p3l-schmidt/lymph_node_atlas` instead of `.../20260830`.
 
@@ -332,40 +356,42 @@ WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
 
 **2. Archive data that predates the naming convention**
 
-Use when the path has no `p3l-account` or no `YYYYMMDD`, so nothing can be
+Use when the path has no account directory or no `YYYYMMDD`, so nothing can be
 derived. You supply the name yourself, in the convention's format.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/bigjbod6/archive/2019/batch_5 \
-    --stack_path /mnt/bigjbod6/archive/2019/batch_5/tiffs \
-    --sample_name 20190501_p3l-doejw_batch5_1 \
-    --voxel_size 650
+    --stack /mnt/bigjbod6/archive/2019/batch_5/tiffs \
+    --dataset-name 20190501_p3l-doejw_batch5_1 \
+    --voxel-size 650
 ```
 
-*Change:* both paths, and `--sample_name` — it must look like
-`YYYYMMDD_p3l-account_SAMPLE_RUN` or it will be rejected.
-*Result:* published as `batch5_1` into `Datasets/p3l-doejw`. Unlike the beamline
-CLI, the manual one does **not** file by date — pass `--project` if you want a
-subfolder.
-*Note:* `--stack_path` is needed because the TIFFs are in `tiffs/`, not
-`tomo/` or `stack/`.
+*Change:* the path, and `--dataset-name` — it must look like
+`YYYYMMDD_account_SAMPLE_RUN` or it will be rejected. The date is the one part
+you cannot leave out; invent one if the real one is lost, and keep it consistent.
+*Result:* published as `batch5_1` into `Datasets/p3l-doejw`, with layer
+`batch5_1_xray`. Unlike the beamline CLI, the manual one does **not** file by
+date — pass `--project` if you want a subfolder.
+*Note:* the account may be a bare username. `20190501_jdoe_batch5_1` is accepted
+and files under `Datasets/jdoe`, which also becomes the team name.
 
 ---
 
 **3. The TIFFs are not in `tomo/` or `stack/`**
 
-Use when the reconstruction wrote them somewhere else. Everything else is still
-derived from the path.
+Use when the reconstruction wrote them somewhere else. The beamline CLI looks
+only in `tomo/` and `stack/`; here you point straight at them.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
-    --stack_path /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1/slices_16bit \
-    --voxel_size 650
+    --stack /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1/slices_16bit \
+    --dataset-name 20260615_p3l-doejw_MB012_1 \
+    --voxel-size 650
 ```
 
-*Change:* `--stack_path` to the directory that actually holds the `.tif` files.
+*Change:* `--stack` to the directory that actually holds the `.tif` files.
+*Note:* the name is the one the beamline CLI would have derived — `recon_111_1`
+contributes only its trailing `1`. §4 has the rule.
 
 ---
 
@@ -376,58 +402,62 @@ Use for model predictions or manual labels. This adds a second layer to the
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
-    --stack_path /mnt/beegfs7/P14/2026/p3l-doejw/SEGMENTATION/20260615/MB012/labels \
-    --voxel_size 650 \
-    --layer_name predictions \
-    --layer_type segmentation
+    --stack /mnt/beegfs7/P14/2026/p3l-doejw/SEGMENTATION/20260615/MB012/labels \
+    --dataset-name 20260615_p3l-doejw_MB012_1 \
+    --voxel-size 650 \
+    --layer-type segmentation
 ```
 
-*Change:* `--stack_path` to your label TIFFs, `--layer_name` to whatever you want
-it called in the viewer.
-*Result:* the log says `Dataset has no 'predictions' layer yet — adding it.
-Existing layers: ['MB012_1_xray']`, and the dataset gains the layer.
+*Change:* `--stack` to your label TIFFs, and `--dataset-name` to the dataset
+they belong to — the same name its tomogram was published under.
+*Result:* the log says `Dataset has no 'MB012_1_segmentation' layer yet — adding
+it. Existing layers: ['MB012_1_xray']`, and the dataset gains the layer.
 *Note:* segmentation stacks must be integer-typed, not float.
 
-**Adding `--dataset-id` is the safer habit.** If the lookup does not find the
-dataset, publishing a non-default layer would create a *new* dataset holding
-only the segmentation, with no tomogram — which is why the run refuses rather than
-doing it:
+**The name is what pairs them.** `--dataset-name` is looked up against the
+dataset's directory name — an exact match, unique by construction — so the layer
+lands on the right dataset without a recorded id, without `--dataset-id`, and
+without the label stack having to sit anywhere in particular. That is the whole
+mechanism: get the name right and the pairing follows.
+
+**The layer name follows from the type.** Omitting `--layer-name` gives
+`<readable name>_segmentation`, so `MB012_1_segmentation` above. Pass it
+explicitly when a dataset has more than one segmentation and the names have to
+tell them apart:
+
+```bash
+    --layer-name MB012_1_mitochondria \
+    --layer-type segmentation
+```
+
+**When the name is wrong, the run refuses rather than guessing.** A layer name
+other than the dataset's own default, with no dataset found, would create a
+*new* dataset holding only the segmentation and no tomogram:
 
 ```
-No existing dataset was found, so publishing layer 'predictions' now would
-create a NEW dataset containing only that layer — no 'MB012_1_xray' beside it.
+No existing dataset was found, so publishing layer 'MB012_1_mitochondria' now
+would create a NEW dataset containing only that layer — no 'MB012_1_xray'
+beside it.
 Nothing has been changed.
 To add this layer to a dataset that already exists, give its id:
     --dataset-id <id>
 ```
 
-Passing `--dataset-id` up front removes any dependence on the lookup. Copy the
-id from the dataset's URL in WEBKNOSSOS.
+Almost always that means a typo in `--dataset-name`. Check it against the
+dataset's directory name in WEBKNOSSOS before reaching for `--dataset-id`.
 
-**Why `--input_dir` still points at the recon.** It is where the publication
-record is written — so both layers end up described in the same `meta_1.json`,
-under the `recon_111_1` key.
-
-**If the recon directory is gone**, name the dataset by id instead. You still
-have to give `--input_dir` — the record has to live somewhere — but it can now
-point at the segmentation, and then you must also supply `--sample_name`,
-because a directory like `labels/` is not a run directory and no name can be
-derived from it:
+**Where the record goes.** `meta_<run>.json` beside the stack, so a label stack
+under `SEGMENTATION/` records itself there rather than in the recon's file. Pass
+`--metadata-file` to put it with the tomogram's record instead, and both layers
+end up described in one file:
 
 ```bash
-WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/SEGMENTATION/20260615/MB012/labels \
-    --sample_name 20260615_p3l-doejw_MB012_1 \
-    --dataset-id 6aad4234b6d36ce98fb28bd6 \
-    --voxel_size 650 \
-    --layer_name predictions \
-    --layer_type segmentation
+    --metadata-file /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/meta_1.json
 ```
 
-*Trade-off:* the record is then filed under `labels` in a metadata file beside
-the segmentation, so the dataset's provenance is split across two files. Prefer
-the first form when the recon directory still exists.
+If that write fails — a directory that is not yours, most often — the publish
+still stands and the log carries the dataset id. Nothing about the dataset is
+wrong; you have only lost the note.
 
 **5. A second image modality as its own layer**
 
@@ -436,13 +466,13 @@ reconstructed separately.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
-    --stack_path /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_121_1/tomo \
-    --voxel_size 650 \
-    --layer_name phase_contrast
+    --stack /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_121_1/tomo \
+    --dataset-name 20260615_p3l-doejw_MB012_1 \
+    --voxel-size 650 \
+    --layer-name phase_contrast
 ```
 
-*Result:* the dataset `MB012_1` now has both `MB012_1_xray` and `phase_contrast`.
+*Result:* the dataset `MB012_1` now has both `MB012_1_xray` and the new layer.
 
 ---
 
@@ -453,12 +483,13 @@ sampling.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
-    --voxel_size 650,650,1300
+    --stack /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1/tomo \
+    --dataset-name 20260615_p3l-doejw_MB012_1 \
+    --voxel-size 650,650,1300
 ```
 
 *Change:* the three numbers are x, y, z in nanometres.
-*Note:* with strongly anisotropic voxels, `--sampling_mode anisotropic` (the
+*Note:* with strongly anisotropic voxels, `--sampling-mode anisotropic` (the
 default) is right — it downsamples x and y before z until the voxels are roughly
 cubic.
 
@@ -471,8 +502,9 @@ be certain which dataset is replaced.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
-    --voxel_size 650 \
+    --stack /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1/tomo \
+    --dataset-name 20260615_p3l-doejw_MB012_1 \
+    --voxel-size 650 \
     --dataset-id 6aad4234b6d36ce98fb28bd6
 ```
 
@@ -488,8 +520,9 @@ updated in place"*.
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1 \
-    --voxel_size 650 \
+    --stack /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/recon_111_1/tomo \
+    --dataset-name 20260615_p3l-doejw_MB012_1 \
+    --voxel-size 650 \
     --replace-legacy
 ```
 
@@ -506,10 +539,10 @@ seconds, not hours:
 
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
-    --input_dir /mnt/bigjbod6/archive/2019/batch_5 \
-    --stack_path /mnt/bigjbod6/archive/2019/batch_5/tiffs \
-    --sample_name 20190501_p3l-doejw_batch5_1 \
-    --voxel_size 650 \
+    --stack /mnt/bigjbod6/archive/2019/batch_5/tiffs \
+    --dataset-name 20190501_p3l-doejw_batch5_1 \
+    --dataset-name 20190501_p3l-doejw_batch5_1 \
+    --voxel-size 650 \
     --dry-run
 ```
 
@@ -522,27 +555,27 @@ replaces the layer and keeps the dataset id.
 ```bash
 WBK_MODULE=wbk_publish.manual WBK_NODE=bcrunch-n08 ./wbk_publish_job.sh \
     --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr \
-    --sample_name 20260115_p3l-eduke_MA040_1 \
-    --voxel_size 650 \
+    --dataset-name 20260115_p3l-eduke_MA040_1 \
+    --voxel-size 650 \
     --dry-run
 ```
 
-*Change:* the path, `--sample_name` (a zarr path has no beamline layout to derive
-the name from), and `--voxel_size`.
+*Change:* the path, `--dataset-name` (a zarr path has no beamline layout to derive
+the name from), and `--voxel-size`.
 *Result:* published as `MA040_1` with layer `MA040_1_xray` into `Datasets/p3l-eduke`.
 The dataset id is recorded in `meta_1.json` **beside the store** (created if
 missing), which is how the next run finds the same dataset.
 *Note:*
 - **One channel per run.** A store with several channels is refused until you pick
   one with `--channel N`. To publish more channels, run once per channel with
-  `--layer_name` and `--dataset-id`, as in example 4.
+  `--layer-name` and `--dataset-id`, as in example 4.
 - **Check the voxel size.** If the store's OME metadata states one (with units),
-  the run compares it with `--voxel_size` and warns if they differ. It still uses
-  `--voxel_size`, because OME units are often wrong. The default is 650 nm, so
+  the run compares it with `--voxel-size` and warns if they differ. It still uses
+  `--voxel-size`, because OME units are often wrong. The default is 650 nm, so
   leaving the flag out is the easy mistake; the dry run shows the warning.
 - Axes are taken from the store's own metadata (OME axes, or zarr v3
   `dimension_names`). An array with neither is read as x, y, z.
-- **Binary masks** go in as `--layer_type segmentation`. A uint8 mask is stored as
+- **Binary masks** go in as `--layer-type segmentation`. A uint8 mask is stored as
   is, and its foreground value is the segment id: 0/1 gives id 1, 0/255 gives 255.
   A bool mask is converted to uint8 0/1 while reading. A float store is refused as a
   segmentation before anything is converted: re-save a float mask as uint8, and
@@ -641,13 +674,13 @@ applied to every line, and per-line arguments come after them, so they win.
 /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB014/recon_111_1  --voxel-size 325
 
 # Segmentations — prefix the line with manual: to use the manual CLI
-manual: --input_dir /mnt/beegfs7/P14/2026/p3l-doejw/RECON/20260615/MB012/stitching_1 \
-        --stack_path /mnt/bigjbod6/2026/p3l-doejw/SEG/MB012/labels \
-        --layer_name predictions --layer_type segmentation
+manual: --stack /mnt/bigjbod6/2026/p3l-doejw/SEG/MB012/labels \
+        --dataset-name 20260615_p3l-doejw_MB012_stitching_1 \
+        --layer-name MB012_stitching_1_labels --layer-type segmentation
 ```
 
-Blank lines and `#` comments are ignored; a trailing `\` continues a line. Both
-flag spellings work everywhere, so one set of common arguments serves both kinds
+Blank lines and `#` comments are ignored; a trailing `\` continues a line. Every
+flag is hyphenated on both CLIs, so one set of common arguments serves both kinds
 of line.
 
 ### A batch of segmentations
@@ -674,9 +707,11 @@ Everything above the account is yours — a model version, a person, a project.
 Below it, the account, the date, the sample and the run directory must match the
 tomogram exactly, because that is what names the dataset.
 
-**The stack directory becomes the layer name.** `labels/` publishes as a layer
-called `labels`; adding `instances/` later gives a second layer with no change
-to the convention.
+**The stack directory becomes part of the layer name.** `labels/` on dataset
+`MB012_1` publishes as the layer `MB012_1_labels`; adding `instances/` later
+gives `MB012_1_instances` with no change to the convention. The dataset's name
+comes first so a layer still says which sample it is when seen on its own, and
+the directory name keeps two segmentations of one dataset apart.
 
 Get one of the four components wrong and the prediction is attributed to a
 different dataset without complaint — a mistyped run number names another real
@@ -693,8 +728,8 @@ produces one line per layer, with the dataset it belongs to named above it:
 
 ```
 # 20260615_p3l-doejw_MB012_1
-manual: --input_dir .../MB012/recon_111_1 --stack_path .../MB012/recon_111_1/labels \
-        --layer_name labels --layer_type segmentation
+manual: --stack .../MB012/recon_111_1 --stack .../MB012/recon_111_1/labels \
+        --layer-name labels --layer-type segmentation
 # SKIPPED  .../MB015/recon_111_1
 #          no subdirectory here holds TIFFs
 ```
@@ -723,14 +758,14 @@ trees — so the fix is to move or rename them, not to work around it.
 
 There is no scan for zarr stores: they can sit anywhere, so nothing in their path
 names the dataset. Write the list by hand, one `manual:` line per store, each with
-its own `--sample_name`:
+its own `--dataset-name`:
 
 ```
 # zarr stores — one line each; the name cannot be derived from the path
-manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr --sample_name 20260115_p3l-eduke_MA040_1
-manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA041.zarr --sample_name 20260115_p3l-eduke_MA041_1 \
-        --voxel_size 325
-manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/two_ch.zarr --channel 1 --sample_name 20260115_p3l-eduke_TWO_1
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040.zarr --dataset-name 20260115_p3l-eduke_MA040_1
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA041.zarr --dataset-name 20260115_p3l-eduke_MA041_1 \
+        --voxel-size 325
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/two_ch.zarr --channel 1 --dataset-name 20260115_p3l-eduke_TWO_1
 ```
 
 Then the same three steps as any batch:
@@ -742,7 +777,7 @@ Then the same three steps as any batch:
 ```
 
 The batch dry run is worth it here more than anywhere. It reports per store a
-multi-channel store without `--channel`, and a `--voxel_size` that disagrees
+multi-channel store without `--channel`, and a `--voxel-size` that disagrees
 with the store's own metadata, before anything is converted. Lines can mix
 zarr stores and TIFF runs. Each store's dataset id is recorded in `meta_<run>.json`
 beside it, so re-submitting the same list replaces layers rather than duplicating.
@@ -759,12 +794,12 @@ the lines in list order, each starting when the one before it has finished:
 
 ```
 # three channels of one dataset, in the order they must run
-manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch0.zarr --sample_name 20260115_p3l-eduke_MA040_1 \
-        --layer_name MA040_1_ch0 --new-dataset
-manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch1.zarr --sample_name 20260115_p3l-eduke_MA040_1 \
-        --layer_name MA040_1_ch1
-manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch2.zarr --sample_name 20260115_p3l-eduke_MA040_1 \
-        --layer_name MA040_1_ch2
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch0.zarr --dataset-name 20260115_p3l-eduke_MA040_1 \
+        --layer-name MA040_1_ch0 --new-dataset
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch1.zarr --dataset-name 20260115_p3l-eduke_MA040_1 \
+        --layer-name MA040_1_ch1
+manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch2.zarr --dataset-name 20260115_p3l-eduke_MA040_1 \
+        --layer-name MA040_1_ch2
 ```
 
 ```bash
@@ -772,12 +807,12 @@ manual: --zarr /mnt/ximg/2026/p3l-eduke/exports/MA040_ch2.zarr --sample_name 202
 ./wbk_batch.sh channels.batch --voxel-size 650 --sequential           # one job, three publishes
 ```
 
-- **Same `--sample_name` on every line** puts the layers in one dataset.
-- **A different `--layer_name` per line.** Otherwise each line would replace the one
+- **Same `--dataset-name` on every line** puts the layers in one dataset.
+- **A different `--layer-name` per line.** Otherwise each line would replace the one
   before it.
 - **`--new-dataset` on the first line only.** It creates the dataset; the later lines
   find it by name. If the first line is the tomogram itself, leave out both its
-  `--layer_name` and `--new-dataset`.
+  `--layer-name` and `--new-dataset`.
 - **Order matters.** The line that creates the dataset comes first.
 
 A failed line does not stop the rest. A line that depended on it then fails at
@@ -912,7 +947,7 @@ run never leaves a dataset without its layer. Re-running is always safe.
 
 | message | what to do |
 |---|---|
-| `Dataset name '…' does not match the expected convention` | The path isn't beamline-shaped. Use the manual CLI with `--sample_name`. |
+| `Dataset name '…' does not match the expected convention` | The path isn't beamline-shaped. Use the manual CLI with `--dataset-name`. |
 | `Cannot find p3l-account in path` / `Cannot find YYYYMMDD` | Same — the path lacks the structure the name is derived from. |
 | `Image stack directory not found` | Check the path, and that its filesystem is mounted on the node. The message names the nearest mount. |
 | `No TIFF files found in …` | The reconstruction hasn't written its slices, or the filesystem is mounted but empty. |
